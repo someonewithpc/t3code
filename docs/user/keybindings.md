@@ -280,6 +280,113 @@ through the pages you have visited, like a browser's back and forward buttons.
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
 
+## Text editing commands
+
+The `text.*` commands edit the focused text field or the composer: moving by
+character, word, line, or the whole field, deleting, cutting, pasting, and
+swapping characters. They have no default shortcuts, so typing works as it
+always did until you bind them.
+
+Cuts go to a list of recent cuts inside T3 Code, not to the system clipboard.
+Cuts made one after another in the same field join into one entry.
+`text.paste` inserts the newest entry, and `text.pasteOlder` right after it
+swaps in the entry before. `text.cutSelection` cuts the word before the caret
+when nothing is selected. After `text.anchorSelection`, moving the caret,
+with the arrow, Home and End keys too, selects text until you cut, copy,
+type, or run `text.clearSelection`. That includes their word and document
+motions, such as Alt+Left and Ctrl+End, or Cmd+Up on macOS.
+
+The field remembers that position as its mark after the selection ends.
+`text.exchangePointAndMark` moves the caret to the mark and selects the text
+between them. Pasting, `text.cursorDocumentStart`, `text.cursorDocumentEnd`,
+and `text.selectAll` also set the mark.
+
+`text.transposeWords` swaps the words before and after the caret.
+`text.upcaseWord`, `text.downcaseWord`, and `text.capitalizeWord` change the
+text from the caret to the end of the next word. `text.newline` starts a new
+line in the composer or a multi-line field without sending.
+
+`text.cursorLineDown` and `text.cursorLineUp` act as Down and Up in a list:
+the command palette, pickers, and the composer's suggestions.
+
+To edit like Emacs, add these rules to `keybindings.json`. Some replace
+defaults while a field has focus, such as `ctrl+k` for the command palette and
+`ctrl+n` for a new thread on Windows and Linux, so rebind those commands if
+you need them from a field. `ctrl+u` cuts to the start of the line as in a
+shell, since T3 Code has no prefix arguments.
+
+```json
+[
+  { "key": "ctrl+f", "command": "text.cursorForward", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+b", "command": "text.cursorBackward", "when": "editableFocus && !terminalFocus" },
+  {
+    "key": "alt+f",
+    "command": "text.cursorWordForward",
+    "when": "editableFocus && !terminalFocus"
+  },
+  {
+    "key": "alt+b",
+    "command": "text.cursorWordBackward",
+    "when": "editableFocus && !terminalFocus"
+  },
+  { "key": "ctrl+a", "command": "text.cursorLineStart", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+e", "command": "text.cursorLineEnd", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+n", "command": "text.cursorLineDown", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+p", "command": "text.cursorLineUp", "when": "editableFocus && !terminalFocus" },
+  {
+    "key": "alt+shift+,",
+    "command": "text.cursorDocumentStart",
+    "when": "editableFocus && !terminalFocus"
+  },
+  {
+    "key": "alt+shift+.",
+    "command": "text.cursorDocumentEnd",
+    "when": "editableFocus && !terminalFocus"
+  },
+  { "key": "ctrl+d", "command": "text.deleteForward", "when": "editableFocus && !terminalFocus" },
+  { "key": "alt+d", "command": "text.cutWordForward", "when": "editableFocus && !terminalFocus" },
+  {
+    "key": "alt+backspace",
+    "command": "text.cutWordBackward",
+    "when": "editableFocus && !terminalFocus"
+  },
+  { "key": "ctrl+k", "command": "text.cutToLineEnd", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+u", "command": "text.cutToLineStart", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+w", "command": "text.cutSelection", "when": "editableFocus && !terminalFocus" },
+  { "key": "alt+w", "command": "text.copySelection", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+y", "command": "text.paste", "when": "editableFocus && !terminalFocus" },
+  { "key": "alt+y", "command": "text.pasteOlder", "when": "editableFocus && !terminalFocus" },
+  {
+    "key": "ctrl+t",
+    "command": "text.transposeCharacters",
+    "when": "editableFocus && !terminalFocus"
+  },
+  {
+    "key": "ctrl+space",
+    "command": "text.anchorSelection",
+    "when": "editableFocus && !terminalFocus"
+  },
+  { "key": "ctrl+g", "command": "text.clearSelection", "when": "editableFocus && !terminalFocus" },
+  {
+    "key": "ctrl+x ctrl+x",
+    "command": "text.exchangePointAndMark",
+    "when": "editableFocus && !terminalFocus"
+  },
+  { "key": "ctrl+x h", "command": "text.selectAll", "when": "editableFocus && !terminalFocus" },
+  { "key": "alt+t", "command": "text.transposeWords", "when": "editableFocus && !terminalFocus" },
+  { "key": "alt+u", "command": "text.upcaseWord", "when": "editableFocus && !terminalFocus" },
+  { "key": "alt+l", "command": "text.downcaseWord", "when": "editableFocus && !terminalFocus" },
+  {
+    "key": "alt+c",
+    "command": "text.capitalizeWord",
+    "when": "editableFocus && !terminalFocus"
+  },
+  { "key": "ctrl+j", "command": "text.newline", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+/", "command": "text.undo", "when": "editableFocus && !terminalFocus" },
+  { "key": "ctrl+shift+-", "command": "text.undo", "when": "editableFocus && !terminalFocus" }
+]
+```
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

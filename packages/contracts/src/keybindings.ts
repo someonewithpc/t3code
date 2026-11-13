@@ -56,6 +56,41 @@ const MODEL_PICKER_KEYBINDING_COMMANDS = [
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 
+const TEXT_EDITING_KEYBINDING_COMMANDS = [
+  "text.cursorForward",
+  "text.cursorBackward",
+  "text.cursorWordForward",
+  "text.cursorWordBackward",
+  "text.cursorLineStart",
+  "text.cursorLineEnd",
+  "text.cursorLineDown",
+  "text.cursorLineUp",
+  "text.cursorDocumentStart",
+  "text.cursorDocumentEnd",
+  "text.deleteForward",
+  "text.deleteBackward",
+  "text.cutWordForward",
+  "text.cutWordBackward",
+  "text.cutToLineEnd",
+  "text.cutToLineStart",
+  "text.cutSelection",
+  "text.copySelection",
+  "text.paste",
+  "text.pasteOlder",
+  "text.transposeCharacters",
+  "text.anchorSelection",
+  "text.clearSelection",
+  "text.selectAll",
+  "text.exchangePointAndMark",
+  "text.transposeWords",
+  "text.upcaseWord",
+  "text.downcaseWord",
+  "text.capitalizeWord",
+  "text.newline",
+  "text.undo",
+] as const;
+export type TextEditingKeybindingCommand = (typeof TEXT_EDITING_KEYBINDING_COMMANDS)[number];
+
 export const STATIC_KEYBINDING_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
@@ -117,6 +152,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "usage.period.quarter",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
+  ...TEXT_EDITING_KEYBINDING_COMMANDS,
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
