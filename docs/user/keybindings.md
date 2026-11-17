@@ -278,6 +278,10 @@ through the pages you have visited, like a browser's back and forward buttons.
 `view.reload` reloads the app window. It has no default shortcut; the desktop app's
 **View → Reload** menu item keeps `mod+r`.
 
+`chat.findNext` and `chat.findPrevious` open find like `chat.find`. While the
+find field has focus, they move to the next or previous match. They have no
+default shortcut.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`

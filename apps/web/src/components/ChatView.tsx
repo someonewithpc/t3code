@@ -2744,6 +2744,12 @@ export default function ChatView(props: ChatViewProps) {
     }
   });
 
+  const openFindShortcut = () => {
+    if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
+      return false;
+    openThreadFind(activeThreadKey);
+  };
+
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
@@ -2765,10 +2771,14 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
-      "chat.find": () => {
-        if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
-          return false;
-        openThreadFind(activeThreadKey);
+      "chat.find": openFindShortcut,
+      // The find bar steps through matches on these while it has focus. With no
+      // default keys, they keep their key where find is unavailable.
+      "chat.findNext": () => {
+        openFindShortcut();
+      },
+      "chat.findPrevious": () => {
+        openFindShortcut();
       },
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;

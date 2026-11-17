@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { cn } from "~/lib/utils";
+import { registerCommands } from "../../shortcuts/dispatcher";
 import {
   formatThreadFindCount,
   nextThreadFindAnnouncement,
@@ -44,6 +45,30 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
     props.focusRequestId,
     props.open,
   ]);
+
+  const step = useEffectEvent((event: globalThis.KeyboardEvent, forward: boolean) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (forward) props.onNext();
+    else props.onPrevious();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers find next and previous shortcuts for the bar's input while the bar is open
+  useEffect(() => {
+    if (!props.open) return;
+    return registerCommands(
+      {
+        "chat.findNext": (event) => step(event, true),
+        "chat.findPrevious": (event) => step(event, false),
+      },
+      {
+        // Capture, so stepping wins over the chat view reopening find.
+        capture: true,
+        when: (event) =>
+          event.target instanceof Element &&
+          event.target.closest("[data-thread-find-bar]") !== null,
+      },
+    );
+  }, [props.open]);
 
   const hasQuery = props.query.trim().length > 0;
   const noResults = hasQuery && !props.status && props.matchCount === 0;
