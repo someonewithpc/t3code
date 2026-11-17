@@ -1,12 +1,18 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 
-import { resolveShortcutCommand, type ShortcutMatchContext } from "../keybindings";
+import {
+  resolveKeySequence,
+  resolveShortcutCommand,
+  type ShortcutEventLike,
+  type ShortcutMatchContext,
+} from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { cancelKeySequence, handleKeySequenceKeyDown } from "./keySequence";
 
 /** Return `false` to let the next scope handle the event. */
 export type CommandHandler = (event: KeyboardEvent) => boolean | void;
@@ -43,6 +49,7 @@ interface CommandScope {
 const globalScopes: CommandScope[] = [];
 const captureScopes: CommandScope[] = [];
 const observerScopes: CommandScope[] = [];
+const contextSources = new Set<() => Partial<ShortcutMatchContext>>();
 
 function readFocusContext(event: KeyboardEvent): Partial<ShortcutMatchContext> {
   return {
@@ -101,7 +108,36 @@ function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boole
   return false;
 }
 
+// A sequence's keys are consumed before any scope sees them, so its when-clause reads every
+// live scope's context at once.
+function readKeySequenceContext(event: KeyboardEvent): Partial<ShortcutMatchContext> {
+  const context = readFocusContext(event);
+  const merge = (source: Partial<ShortcutMatchContext> | undefined) => {
+    for (const [name, value] of Object.entries(source ?? {})) {
+      if (value) context[name] = true;
+    }
+  };
+  for (const scope of [...captureScopes, ...globalScopes]) {
+    if (!scope.options.when || scope.options.when(event)) merge(scope.options.context?.());
+  }
+  for (const read of contextSources) merge(read());
+  return context;
+}
+
+function resolveKeySequenceForEvent(keys: ReadonlyArray<ShortcutEventLike>, event: KeyboardEvent) {
+  const keybindingSets = [appAtomRegistry.get(primaryServerKeybindingsAtom)];
+  for (const scope of [...captureScopes, ...globalScopes]) {
+    const own = scope.options.keybindings?.();
+    if (own) keybindingSets.push(own);
+  }
+  if (!keybindingSets.some((set) => set.some((binding) => "sequence" in binding))) return null;
+  return resolveKeySequence(keys, keybindingSets.flat(), {
+    context: readKeySequenceContext(event),
+  });
+}
+
 function dispatchCaptureKeyDown(event: KeyboardEvent): void {
+  if (handleKeySequenceKeyDown(event, resolveKeySequenceForEvent)) return;
   runScopes(captureScopes, event);
 }
 
@@ -116,6 +152,9 @@ function ensureKeydownListener() {
   keydownInstalled = true;
   window.addEventListener("keydown", dispatchCaptureKeyDown, true);
   window.addEventListener("keydown", dispatchKeyDown);
+  window.addEventListener("blur", cancelKeySequence);
+  window.addEventListener("focusin", cancelKeySequence, true);
+  window.addEventListener("pointerdown", cancelKeySequence, true);
 }
 
 function pushScope(list: CommandScope[], scope: CommandScope): () => void {
@@ -134,6 +173,18 @@ export function registerCommands(
 ): () => void {
   const scopes = options.observe ? observerScopes : options.capture ? captureScopes : globalScopes;
   return pushScope(scopes, { commands, options });
+}
+
+/**
+ * When-clause context for key sequences from a listener outside the dispatcher, such as the
+ * chat view's composerFocus. Single-chord rules keep reading each listener's own context.
+ */
+export function registerShortcutContext(read: () => Partial<ShortcutMatchContext>): () => void {
+  ensureKeydownListener();
+  contextSources.add(read);
+  return () => {
+    contextSources.delete(read);
+  };
 }
 
 type MenuActionHandler = () => void;

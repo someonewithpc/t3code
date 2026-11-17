@@ -9,6 +9,7 @@ import {
 } from "../../lib/terminalCloseShortcut";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
+import { registerShortcutContext } from "../../shortcuts/dispatcher";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
@@ -129,6 +130,11 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     event.stopPropagation();
   });
+  const readSequenceContext = useEffectEvent(() =>
+    input.enabled ? input.getShortcutContext(document.activeElement) : {},
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lends the chat's when-clause context to key sequences, which resolve before this hook's listeners run
+  useEffect(() => registerShortcutContext(readSequenceContext), []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, or on an embedded chat's composer
   useEffect(() => {
     if (embedded) {

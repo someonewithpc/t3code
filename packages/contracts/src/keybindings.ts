@@ -6,6 +6,7 @@ const MAX_KEYBINDING_WHEN_LENGTH = 256;
 export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
+export const MAX_KEYBINDING_SEQUENCE_STEPS = 4;
 
 export const THREAD_JUMP_KEYBINDING_COMMANDS = [
   "thread.jump.1",
@@ -205,11 +206,27 @@ export type KeybindingWhenNode =
   | { type: "and"; left: KeybindingWhenNode; right: KeybindingWhenNode }
   | { type: "or"; left: KeybindingWhenNode; right: KeybindingWhenNode };
 
-export const ResolvedKeybindingRule = Schema.Struct({
+const ResolvedKeybindingShortcutRule = Schema.Struct({
   command: KeybindingCommand,
   shortcut: KeybindingShortcut,
   whenAst: Schema.optional(KeybindingWhenNode),
 }).annotate({ parseOptions: { onExcessProperty: "ignore" } });
+
+// No `shortcut` field: a client from before key sequences fails to decode the rule and drops
+// it, instead of running the command on the first key alone.
+const ResolvedKeybindingSequenceRule = Schema.Struct({
+  command: KeybindingCommand,
+  sequence: Schema.Array(KeybindingShortcut).check(
+    Schema.isMinLength(2),
+    Schema.isMaxLength(MAX_KEYBINDING_SEQUENCE_STEPS),
+  ),
+  whenAst: Schema.optional(KeybindingWhenNode),
+}).annotate({ parseOptions: { onExcessProperty: "ignore" } });
+
+export const ResolvedKeybindingRule = Schema.Union([
+  ResolvedKeybindingShortcutRule,
+  ResolvedKeybindingSequenceRule,
+]);
 export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;
 
 /** Drops undecodable rules without failing the connection. */

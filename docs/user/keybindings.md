@@ -124,6 +124,29 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 `mod` means Command on macOS and Control elsewhere. Other modifiers are
 `cmd` / `meta`, `ctrl` / `control`, `alt` / `option`, and `shift`.
 
+### Key sequences
+
+Separate keys with a space to bind a sequence of up to four keys, like Emacs
+prefix keys. With `ctrl+x ctrl+b`, press Ctrl+X, then Ctrl+B. Spaces next to a `+`
+do not split keys, so `ctrl + x` is still one key.
+
+```json
+{ "key": "ctrl+x ctrl+b", "command": "sidebar.toggle", "when": "!terminalFocus" }
+```
+
+After the first key, a small notice shows the keys pressed so far, and T3 Code
+waits for the next one with no timeout. A key that does not continue any
+sequence cancels it and shows that the sequence is undefined. Escape, a click, or
+moving focus also cancels. Keep `!terminalFocus` if the shell should still
+receive the first key.
+
+To record a sequence in Settings, record the first key, then press **+** beside
+it for each further key. Each key has its own remove button, and clicking a key
+records it again. The same controls set an action's shortcut. Settings warns when
+one shortcut's keys start another's. Sequences run in
+the app window only. A focused desktop browser or HTML preview, and clients
+older than this feature, ignore them.
+
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
@@ -167,7 +190,8 @@ Streamed browser tabs and T3 Code in a web browser do not support it.
 
 The last rule whose key and condition both match wins, even if it belongs to a
 different command. Put a more specific rule after a general one when they share
-a shortcut.
+a shortcut. A key that starts an active sequence wins over a single-key rule on
+the same key, whatever their order.
 
 ## Commands with special behavior
 

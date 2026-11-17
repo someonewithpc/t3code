@@ -51,30 +51,28 @@ async function activate(locator: Locator, action: "click" | "focus") {
   (locator.element() as HTMLElement)[action]();
 }
 
-const existingField = page.getByRole("textbox", { name: "Keybinding for Sidebar: Toggle" });
 const existingPill = page.getByRole("button", { name: /^Edit shortcut for Sidebar: Toggle:/ });
 const newField = page.getByRole("textbox", { name: "Keybinding for new keybinding" });
 
 describe("Esc in a shortcut recorder", () => {
   it.each<{
     name: string;
-    field: Locator;
+    label: string;
     open: () => Promise<void>;
     expectReset: () => Promise<void>;
   }>([
     {
       name: "existing binding",
-      field: existingField,
+      label: "Sidebar: Toggle",
       open: () => activate(existingPill, "click"),
       expectReset: async () => {
-        await expect.element(existingField).not.toBeInTheDocument();
         await expect.element(existingPill).toHaveFocus();
         await expect.element(page.getByRole("button", { name: "Save" })).not.toBeInTheDocument();
       },
     },
     {
       name: "new binding",
-      field: newField,
+      label: "new keybinding",
       open: async () => {
         await activate(page.getByRole("button", { name: "Add keybinding" }), "click");
         await activate(newField, "focus");
@@ -84,7 +82,7 @@ describe("Esc in a shortcut recorder", () => {
         await expect.element(newField).toHaveAttribute("placeholder", "Unassigned");
       },
     },
-  ])("leaves the $name field without closing Settings", async ({ field, open, expectReset }) => {
+  ])("leaves the $name field without closing Settings", async ({ label, open, expectReset }) => {
     const onOpenChange = vi.fn();
     await using _screen = await render(
       <Dialog open onOpenChange={onOpenChange}>
@@ -94,13 +92,26 @@ describe("Esc in a shortcut recorder", () => {
         </DialogPopup>
       </Dialog>,
     );
+    const addStep = page.getByRole("button", {
+      name: `Add a key to the shortcut for ${label}`,
+      exact: true,
+    });
+    const nextStep = page.getByRole("textbox", { name: `Key 2 of the shortcut for ${label}` });
 
     await open();
     await userEvent.keyboard("{Control>}k{/Control}");
-    await expect.element(field).not.toHaveValue("");
-    await userEvent.tab();
-    await activate(field, "focus");
-    await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
+    await expect.element(addStep).toHaveFocus();
+
+    // Esc while recording a later step drops only that step.
+    await userEvent.keyboard("{Enter}");
+    await expect.element(nextStep).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(addStep).toHaveFocus();
+    await expect
+      .element(
+        page.getByRole("button", { name: `Change key 1 of the shortcut for ${label}: Ctrl+K` }),
+      )
+      .toBeVisible();
 
     await userEvent.keyboard("{Escape}");
 
@@ -111,6 +122,51 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+});
+
+it("records a sequence one step at a time and saves it whole", async () => {
+  const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
+  await vi.mocked(atomCommands.useAtomCommand).withImplementation(
+    () => mutate as never,
+    async () => {
+      await using screen = await render(<KeybindingsSettingsPanel />);
+      const addStep = screen.getByRole("button", {
+        name: "Add a key to the shortcut for Sidebar: Toggle",
+        exact: true,
+      });
+      const removeStep = (index: number, key: string) =>
+        screen.getByRole("button", {
+          name: `Remove key ${index} (${key}) from the shortcut for Sidebar: Toggle`,
+        });
+
+      await addStep.click();
+      await userEvent.keyboard("{Control>}x{/Control}");
+      await expect.element(addStep).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      // Keys that could end a recording elsewhere are steps like any other.
+      await userEvent.keyboard("{Backspace}");
+      await expect.element(addStep).toHaveFocus();
+
+      await removeStep(2, "Ctrl+X").click();
+      await expect.element(removeStep(2, "Backspace")).toHaveFocus();
+      await removeStep(2, "Backspace").click();
+      await expect.element(existingPill).toHaveFocus();
+
+      await addStep.click();
+      await userEvent.keyboard("{Control>}x{/Control}");
+      await addStep.click();
+      await userEvent.keyboard("{Control>}x{/Control}");
+      await screen.getByRole("button", { name: "Save" }).click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "env",
+        input: expect.objectContaining({
+          command: "sidebar.toggle",
+          key: "mod+b mod+x mod+x",
+          replace: { command: "sidebar.toggle", key: "mod+b" },
+        }),
+      });
+    },
+  );
 });
 
 it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {

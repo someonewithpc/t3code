@@ -1,4 +1,5 @@
 import {
+  MAX_KEYBINDING_SEQUENCE_STEPS,
   STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
   type KeybindingShortcut,
@@ -8,8 +9,10 @@ import {
 } from "@t3tools/contracts";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
-  parseKeybindingShortcut,
+  keybindingRuleSteps,
+  parseKeybindingSequence,
   parseKeybindingWhenExpression,
+  splitKeybindingSequence,
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
 
@@ -90,6 +93,10 @@ export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string 
   return parts.join("+");
 }
 
+function keybindingInputForBinding(binding: ResolvedKeybindingRule): string {
+  return keybindingRuleSteps(binding).map(shortcutToKeybindingInput).join(" ");
+}
+
 export function whenAstToExpression(node: KeybindingWhenNode | undefined): string {
   if (!node) return "";
   switch (node.type) {
@@ -139,12 +146,12 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
     return "Project";
   }
 
-  const bindingKey = shortcutToKeybindingInput(binding.shortcut);
+  const bindingKey = keybindingInputForBinding(binding);
   const bindingWhen = whenAstToExpression(binding.whenAst);
   const isDefault = DEFAULT_RESOLVED_KEYBINDINGS.some(
     (entry) =>
       entry.command === binding.command &&
-      shortcutToKeybindingInput(entry.shortcut) === bindingKey &&
+      keybindingInputForBinding(entry) === bindingKey &&
       whenAstToExpression(entry.whenAst) === bindingWhen,
   );
 
@@ -154,21 +161,20 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
 function defaultBindingForBinding(
   binding: ResolvedKeybindingRule,
 ): ResolvedKeybindingRule | undefined {
-  const bindingKey = shortcutToKeybindingInput(binding.shortcut);
+  const bindingKey = keybindingInputForBinding(binding);
   const bindingWhen = whenAstToExpression(binding.whenAst);
 
   return (
     DEFAULT_RESOLVED_KEYBINDINGS.find(
       (entry) =>
         entry.command === binding.command &&
-        shortcutToKeybindingInput(entry.shortcut) === bindingKey &&
+        keybindingInputForBinding(entry) === bindingKey &&
         whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
     (bindingWhen === "false"
       ? DEFAULT_RESOLVED_KEYBINDINGS.find(
           (entry) =>
-            entry.command === binding.command &&
-            shortcutToKeybindingInput(entry.shortcut) === bindingKey,
+            entry.command === binding.command && keybindingInputForBinding(entry) === bindingKey,
         )
       : undefined) ??
     DEFAULT_RESOLVED_KEYBINDINGS.find(
@@ -194,15 +200,21 @@ export function keybindingConflictLabels(
   platform = navigator.platform,
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
-  const shortcut = parseKeybindingShortcut(input.key);
-  if (!shortcut) return [];
+  const steps = parseKeybindingSequence(input.key);
+  if (!steps) return [];
   // Compare resolved chords so mod+k and ctrl+k collide where mod is Ctrl.
-  const conflictKey = shortcutConflictKey(shortcut, platform);
+  const conflictKeys = steps.map((step) => shortcutConflictKey(step, platform));
+  // Equal keys collide, and so does a key that is a prefix of the other's sequence.
+  const sharesPrefix = (candidate: ResolvedKeybindingRule) =>
+    keybindingRuleSteps(candidate).every(
+      (step, index) =>
+        index >= conflictKeys.length || shortcutConflictKey(step, platform) === conflictKeys[index],
+    );
   const conflicts: Array<string> = [];
   for (const candidate of rows) {
     if (
       candidate.id !== input.rowId &&
-      shortcutConflictKey(candidate.binding.shortcut, platform) === conflictKey &&
+      sharesPrefix(candidate.binding) &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
       conflicts.push(commandLabel(candidate.command));
@@ -263,7 +275,7 @@ export function buildKeybindingRows(
   const rowsById = new Map<string, KeybindingRow>();
   for (const binding of keybindings) {
     const defaultBinding = defaultBindingForBinding(binding);
-    const key = shortcutToKeybindingInput(binding.shortcut);
+    const key = keybindingInputForBinding(binding);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
     rowsById.set(id, {
@@ -275,8 +287,8 @@ export function buildKeybindingRows(
       isUnassigned:
         when === "false" &&
         defaultBinding !== undefined &&
-        key === shortcutToKeybindingInput(defaultBinding.shortcut),
-      defaultKey: defaultBinding ? shortcutToKeybindingInput(defaultBinding.shortcut) : null,
+        key === keybindingInputForBinding(defaultBinding),
+      defaultKey: defaultBinding ? keybindingInputForBinding(defaultBinding) : null,
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,
       conflicts: [],
@@ -481,4 +493,23 @@ export function keybindingFromKeyboardEvent(
   if (event.shiftKey) parts.push("shift");
   parts.push(keyToken);
   return parts.join("+");
+}
+
+export function canAddKeybindingStep(key: string): boolean {
+  const count = splitKeybindingSequence(key).length;
+  return count > 0 && count < MAX_KEYBINDING_SEQUENCE_STEPS;
+}
+
+/** Replaces the chord at `index`, or appends it when `index` is the step count. */
+export function setKeybindingStep(key: string, index: number, chord: string): string {
+  const steps = splitKeybindingSequence(key);
+  if (index > steps.length || index >= MAX_KEYBINDING_SEQUENCE_STEPS) return key;
+  steps[index] = chord;
+  return steps.join(" ");
+}
+
+export function removeKeybindingStep(key: string, index: number): string {
+  return splitKeybindingSequence(key)
+    .filter((_, stepIndex) => stepIndex !== index)
+    .join(" ");
 }

@@ -1,7 +1,14 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { dispatchMenuAction, registerCommands, registerMenuAction } from "./dispatcher";
+import { resolveShortcutCommand } from "../keybindings";
+import {
+  dispatchMenuAction,
+  registerCommands,
+  registerMenuAction,
+  registerShortcutContext,
+} from "./dispatcher";
 
 function bindings(entries: ReadonlyArray<[string, KeybindingCommand]>): ResolvedKeybindingsConfig {
   return entries.map(([key, command]) => ({
@@ -143,5 +150,127 @@ describe("command dispatcher", () => {
 
     expect(newer).toHaveBeenCalledOnce();
     expect(older).toHaveBeenCalledOnce();
+  });
+});
+
+function pressKey(init: KeyboardEventInit, target: EventTarget = window): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { cancelable: true, bubbles: true, ...init });
+  target.dispatchEvent(event);
+  return event;
+}
+
+const ctrlX = { key: "x", code: "KeyX", ctrlKey: true };
+
+const sequenceKeybindings = () =>
+  compileResolvedKeybindingsConfig([
+    { key: "ctrl+x h", command: "chat.new" },
+    { key: "ctrl+x ctrl+x", command: "chat.newLocal" },
+    { key: "ctrl+x", command: "sidebar.toggle" },
+    { key: "ctrl+x c", command: "chat.find", when: "composerFocus" },
+  ]);
+
+describe("key sequences", () => {
+  it("consumes every key of a sequence and runs its command once, in and out of scopes", () => {
+    const command = vi.fn();
+    const shadowed = vi.fn();
+    const resolvedOutside: Array<KeybindingCommand | null> = [];
+    const outsideListener = (event: KeyboardEvent) => {
+      resolvedOutside.push(resolveShortcutCommand(event, sequenceKeybindings()));
+    };
+    using stack = new DisposableStack();
+    stack.defer(
+      registerCommands(
+        { "chat.new": command, "sidebar.toggle": shadowed },
+        { keybindings: sequenceKeybindings },
+      ),
+    );
+    window.addEventListener("keydown", outsideListener);
+    stack.defer(() => window.removeEventListener("keydown", outsideListener));
+
+    expect(pressKey(ctrlX).defaultPrevented).toBe(true);
+    expect(pressKey({ key: "h", code: "KeyH" }).defaultPrevented).toBe(true);
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(command.mock.calls[0]?.[0].key).toBe("Unidentified");
+    expect(shadowed).not.toHaveBeenCalled();
+    expect(resolvedOutside).toEqual(["chat.new"]);
+    expect(pressKey({ key: "h", code: "KeyH" }).defaultPrevented).toBe(false);
+  });
+
+  it("routes the final command to a capture scope and swallows key repeats", () => {
+    const command = vi.fn();
+    using stack = new DisposableStack();
+    stack.defer(
+      registerCommands(
+        { "chat.newLocal": command },
+        { keybindings: sequenceKeybindings, capture: true },
+      ),
+    );
+
+    pressKey(ctrlX);
+    expect(pressKey({ ...ctrlX, repeat: true }).defaultPrevented).toBe(true);
+    expect(command).not.toHaveBeenCalled();
+    pressKey(ctrlX);
+
+    expect(command).toHaveBeenCalledOnce();
+  });
+
+  it("swallows an undefined key, cancels on Escape, and lets modifier keys through", () => {
+    const command = vi.fn();
+    using stack = new DisposableStack();
+    stack.defer(registerCommands({ "chat.new": command }, { keybindings: sequenceKeybindings }));
+
+    pressKey(ctrlX);
+    expect(pressKey({ key: "Shift", code: "ShiftLeft", shiftKey: true }).defaultPrevented).toBe(
+      false,
+    );
+    expect(pressKey({ key: "z", code: "KeyZ" }).defaultPrevented).toBe(true);
+    expect(pressKey({ key: "h", code: "KeyH" }).defaultPrevented).toBe(false);
+
+    pressKey(ctrlX);
+    expect(pressKey({ key: "Escape", code: "Escape" }).defaultPrevented).toBe(true);
+    expect(pressKey({ key: "h", code: "KeyH" }).defaultPrevented).toBe(false);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it("cancels on pointerdown and focus changes, and leaves the shortcut recorder alone", () => {
+    const command = vi.fn();
+    const button = document.createElement("button");
+    const recorder = document.createElement("input");
+    recorder.setAttribute("data-keybinding-capture", "");
+    document.body.append(button, recorder);
+    using stack = new DisposableStack();
+    stack.defer(() => {
+      button.remove();
+      recorder.remove();
+    });
+    stack.defer(registerCommands({ "chat.new": command }, { keybindings: sequenceKeybindings }));
+
+    pressKey(ctrlX);
+    window.dispatchEvent(new PointerEvent("pointerdown"));
+    expect(pressKey({ key: "h", code: "KeyH" }).defaultPrevented).toBe(false);
+
+    pressKey(ctrlX);
+    button.focus();
+    expect(pressKey({ key: "h", code: "KeyH" }, button).defaultPrevented).toBe(false);
+
+    recorder.focus();
+    expect(pressKey(ctrlX, recorder).defaultPrevented).toBe(false);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it("reads when-clause context registered outside the dispatcher", () => {
+    const command = vi.fn();
+    using stack = new DisposableStack();
+    stack.defer(registerCommands({ "chat.find": command }, { keybindings: sequenceKeybindings }));
+
+    pressKey(ctrlX);
+    pressKey({ key: "c", code: "KeyC" });
+    expect(command).not.toHaveBeenCalled();
+
+    stack.defer(registerShortcutContext(() => ({ composerFocus: true })));
+    pressKey(ctrlX);
+    pressKey({ key: "c", code: "KeyC" });
+    expect(command).toHaveBeenCalledOnce();
   });
 });

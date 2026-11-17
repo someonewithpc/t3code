@@ -18,6 +18,7 @@ import {
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
+  resolveKeySequence,
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
@@ -234,6 +235,68 @@ describe("effectiveShortcutsForCommand", () => {
       }),
       [reopen],
     );
+  });
+});
+
+describe("key sequences", () => {
+  const options = { platform: "Linux x86_64" };
+  const ctrlX = event({ key: "x", code: "KeyX", ctrlKey: true });
+  const h = event({ key: "h", code: "KeyH" });
+  const keybindings = compileResolvedKeybindingsConfig([
+    { key: "ctrl+x h", command: "sidebar.toggle" },
+    { key: "ctrl+x ctrl+x", command: "terminal.toggle", when: "terminalOpen" },
+    { key: "h", command: "chat.new" },
+  ]);
+
+  it("waits on a prefix, then resolves the full sequence or nothing", () => {
+    assert.deepEqual(resolveKeySequence([ctrlX], keybindings, options), { type: "prefix" });
+    const match = resolveKeySequence([ctrlX, h], keybindings, options);
+    assert.strictEqual(match?.type === "command" ? match.binding.command : null, "sidebar.toggle");
+    assert.isNull(
+      resolveKeySequence([ctrlX, event({ key: "z", code: "KeyZ" })], keybindings, options),
+    );
+    assert.isNull(resolveKeySequence([ctrlX, ctrlX], keybindings, options));
+    const terminal = resolveKeySequence([ctrlX, ctrlX], keybindings, {
+      ...options,
+      context: { terminalOpen: true },
+    });
+    assert.strictEqual(
+      terminal?.type === "command" ? terminal.binding.command : null,
+      "terminal.toggle",
+    );
+  });
+
+  it("lets a prefix shadow a single-key rule on the same key, whatever the rule order", () => {
+    const shadowed = compileResolvedKeybindingsConfig([
+      { key: "ctrl+x h", command: "sidebar.toggle" },
+      { key: "ctrl+x", command: "chat.new" },
+      { key: "ctrl+x", command: "chat.newLocal", when: "terminalFocus" },
+    ]);
+    assert.isNull(resolveShortcutCommand(ctrlX, shadowed, options));
+    assert.isNull(shortcutLabelForCommand(shadowed, "chat.new", options));
+    const inTerminal = { ...options, context: { terminalFocus: true } };
+    assert.isNull(resolveShortcutCommand(ctrlX, shadowed, inTerminal));
+
+    const prefixOff = compileResolvedKeybindingsConfig([
+      { key: "ctrl+x h", command: "sidebar.toggle", when: "!terminalFocus" },
+      { key: "ctrl+x", command: "chat.new" },
+    ]);
+    assert.strictEqual(resolveShortcutCommand(ctrlX, prefixOff, inTerminal), "chat.new");
+    assert.isNull(resolveShortcutCommand(ctrlX, prefixOff, options));
+  });
+
+  it("never runs a sequence from its last key alone", () => {
+    assert.strictEqual(resolveShortcutCommand(h, keybindings, options), "chat.new");
+    assert.isNull(resolveShortcutCommand(ctrlX, keybindings, options));
+  });
+
+  it("labels sequences but keeps them out of single-chord consumers", () => {
+    assert.strictEqual(shortcutLabelForCommand(keybindings, "sidebar.toggle", options), "Ctrl+X H");
+    assert.strictEqual(
+      shortcutLabelForCommand(keybindings, "sidebar.toggle", "MacIntel"),
+      "\u2303X H",
+    );
+    assert.deepEqual(effectiveShortcutsForCommand(keybindings, "sidebar.toggle", options), []);
   });
 });
 

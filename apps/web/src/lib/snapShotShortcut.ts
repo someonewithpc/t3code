@@ -1,12 +1,14 @@
 import {
   isModifierPairShortcut,
+  type KeybindingCommand,
+  type ResolvedKeybindingsConfig,
   snapShotModifierPairLabel,
   snapShotShortcutModifierPair,
   type KeybindingShortcut,
   type SnapShotModifier,
   type SnapShotShortcut,
 } from "@t3tools/contracts";
-import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
+import { keybindingRuleSteps, parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 
 import { formatShortcutKeyLabel, formatShortcutLabel, shortcutConflictKey } from "../keybindings";
 import { isMacPlatform, isWindowsPlatform } from "./utils";
@@ -106,15 +108,18 @@ export function sameSnapShotShortcut(
   return shortcutConflictKey(left, platform) === shortcutConflictKey(right, platform);
 }
 
-export function snapShotKeybindingConflict<Command extends string>(
+export function snapShotKeybindingConflict(
   shortcut: SnapShotShortcut,
-  keybindings: ReadonlyArray<{ readonly command: Command; readonly shortcut: KeybindingShortcut }>,
+  keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
-): Command | null {
+): KeybindingCommand | null {
   if (isModifierPairShortcut(shortcut)) return null;
   const key = shortcutConflictKey(shortcut, platform);
+  // A global shortcut on a sequence's first key leaves the sequence unreachable.
   return (
-    keybindings.find((binding) => shortcutConflictKey(binding.shortcut, platform) === key)
-      ?.command ?? null
+    keybindings.find((binding) => {
+      const [step] = keybindingRuleSteps(binding);
+      return step !== undefined && shortcutConflictKey(step, platform) === key;
+    })?.command ?? null
   );
 }

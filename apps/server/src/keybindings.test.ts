@@ -74,6 +74,40 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }),
   );
 
+  it.effect("parses key sequences without changing how single chords parse", () =>
+    Effect.sync(() => {
+      const chord = (key: string, modifiers: { ctrlKey?: boolean; shiftKey?: boolean } = {}) => ({
+        key,
+        metaKey: false,
+        ctrlKey: modifiers.ctrlKey ?? false,
+        shiftKey: modifiers.shiftKey ?? false,
+        altKey: false,
+        modKey: false,
+      });
+      const ctrlX = chord("x", { ctrlKey: true });
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("ctrl + x"), [ctrlX]);
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence(" ctrl+ shift +x "), [
+        chord("x", { ctrlKey: true, shiftKey: true }),
+      ]);
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("ctrl+space"), [
+        chord(" ", { ctrlKey: true }),
+      ]);
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("ctrl + +"), [
+        chord("+", { ctrlKey: true }),
+      ]);
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("ctrl+x  ctrl+x"), [ctrlX, ctrlX]);
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("ctrl+x h"), [ctrlX, chord("h")]);
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("ctrl+x space"), [
+        ctrlX,
+        chord(" "),
+      ]);
+      assert.isNull(SharedKeybindings.parseKeybindingShortcut("ctrl+x h"));
+      assert.isNull(SharedKeybindings.parseKeybindingSequence("ctrl+x h+j"));
+      assert.isNull(SharedKeybindings.parseKeybindingSequence("a b c d e"));
+      assert.deepEqual(SharedKeybindings.parseKeybindingSequence("a b c d")?.length, 4);
+    }),
+  );
+
   it.effect("compiles valid rule with parsed when AST", () =>
     Effect.sync(() => {
       const compiled = SharedKeybindings.compileResolvedKeybindingRule({
@@ -118,6 +152,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "mod+d",
           command: "terminal.split",
           when: "terminalFocus && (",
+        }),
+      );
+
+      assert.isNull(
+        SharedKeybindings.compileResolvedKeybindingRule({
+          key: "ctrl+x mod+shift+d+o",
+          command: "terminal.new",
         }),
       );
 
@@ -182,6 +223,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
+          { key: "ctrl+x ctrl+j", command: "terminal.toggle", when: "terminalOpen" },
         ]),
       );
 
@@ -190,6 +232,15 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         return yield* keybindings.loadConfigState;
       });
 
+      const ctrl = { metaKey: false, ctrlKey: true, shiftKey: false, altKey: false, modKey: false };
+      assert.deepInclude(configState.keybindings, {
+        command: "terminal.toggle",
+        sequence: [
+          { key: "x", ...ctrl },
+          { key: "j", ...ctrl },
+        ],
+        whenAst: { type: "identifier", name: "terminalOpen" },
+      });
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
       assert.isFalse(
         configState.keybindings.some((entry) => String(entry.command) === "invalid.command"),
@@ -246,7 +297,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const configState = yield* keybindings.loadConfigState;
         assert.deepEqual(
           configState.keybindings
-            .filter((entry) => entry.shortcut.key === "b" && entry.shortcut.shiftKey)
+            .filter(
+              (entry) =>
+                "shortcut" in entry && entry.shortcut.key === "b" && entry.shortcut.shiftKey,
+            )
             .map((entry) => entry.command),
           ["threadPanel.toggle", "script.custom-panel.run", "script.custom-composer.run"],
         );
@@ -552,6 +606,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         { key: "mod+shift+r", command: "script.run-tests.run" },
         { key: "x\u0000true", command: "script.run-tests.run" },
         { key: "x", command: "script.run-tests.run", when: "true" },
+        { key: "Ctrl + X  Shift+R", command: "script.run-tests.run" },
       ]);
       yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings.Keybindings;
@@ -564,6 +619,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "x",
           command: "script.run-tests.run",
           when: "true",
+        });
+        yield* keybindings.removeKeybindingRule({
+          key: "ctrl+x shift+r",
+          command: "script.run-tests.run",
         });
       });
 
@@ -697,6 +756,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           change.keybindings.some(
             (rule) =>
               rule.command === "threadPanel.toggle" &&
+              "shortcut" in rule &&
               rule.shortcut.key === "k" &&
               rule.shortcut.modKey,
           ),

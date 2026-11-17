@@ -2,7 +2,13 @@ import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-import { ResolvedKeybindingsConfig } from "./keybindings.ts";
+import { ForwardCompatibleArray } from "./baseSchemas.ts";
+import {
+  KeybindingCommand,
+  KeybindingShortcut,
+  KeybindingWhenNode,
+  ResolvedKeybindingsConfig,
+} from "./keybindings.ts";
 
 const decode = <S extends Schema.Top>(
   schema: S,
@@ -62,6 +68,46 @@ it.effect("drops malformed resolved rule entries", () =>
     assert.deepEqual(
       parsed.map((rule) => rule.command),
       ["terminal.toggle"],
+    );
+  }),
+);
+
+it.effect("keeps key sequences away from clients that only know single chords", () =>
+  Effect.gen(function* () {
+    const codec = Schema.fromJsonString(ResolvedKeybindingsConfig);
+    const rules = [
+      { command: "terminal.toggle" as const, shortcut },
+      { command: "filePicker.toggle" as const, sequence: [shortcut, { ...shortcut, key: "f" }] },
+    ];
+    const encoded = yield* Schema.encodeEffect(codec)(rules);
+    assert.deepEqual(yield* decode(codec, encoded), rules);
+
+    // The rule shape before key sequences existed.
+    const singleChordClient = ForwardCompatibleArray(
+      Schema.Struct({
+        command: KeybindingCommand,
+        shortcut: KeybindingShortcut,
+        whenAst: Schema.optional(KeybindingWhenNode),
+      }).annotate({ parseOptions: { onExcessProperty: "ignore" } }),
+    );
+    const parsed = yield* decode(Schema.fromJsonString(singleChordClient), encoded);
+    assert.deepEqual(
+      parsed.map((rule) => rule.command),
+      ["terminal.toggle"],
+    );
+  }),
+);
+
+it.effect("drops a sequence with one step or too many", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(ResolvedKeybindingsConfig, [
+      { command: "terminal.toggle", sequence: [shortcut] },
+      { command: "terminal.toggle", sequence: Array.from({ length: 5 }, () => shortcut) },
+      { command: "filePicker.toggle", sequence: [shortcut, shortcut] },
+    ]);
+    assert.deepEqual(
+      parsed.map((rule) => rule.command),
+      ["filePicker.toggle"],
     );
   }),
 );

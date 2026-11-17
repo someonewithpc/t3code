@@ -10,9 +10,12 @@ import { resolveShortcutCommand } from "../../keybindings";
 import {
   buildKeybindingRows,
   buildWhenVariableOptions,
+  canAddKeybindingStep,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
+  removeKeybindingStep,
+  setKeybindingStep,
   shortcutToKeybindingInput,
   unknownWhenVariables,
   whenAstToExpression,
@@ -301,6 +304,36 @@ describe("KeybindingsSettings.logic", () => {
     ).toEqual(["Chat: New Local", ...expected.ctrl].toSorted());
   });
 
+  it("lists key sequences and reports a prefix that shadows a shorter binding", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "chat.new", key: "ctrl+x  h" },
+        { command: "chat.newLocal", key: "ctrl+x ctrl+x" },
+        { command: "sidebar.toggle", key: "mod+x" },
+        { command: "thread.copyReference", key: "ctrl+x" },
+      ]),
+      "Linux x86_64",
+    );
+    const conflictsFor = (key: string) => rows.find((row) => row.key === key)?.conflicts;
+
+    expect(conflictsFor("ctrl+x h")).toEqual([
+      "Pull Request: Copy Link or Thread",
+      "Sidebar: Toggle",
+    ]);
+    expect(conflictsFor("ctrl+x ctrl+x")).toEqual([
+      "Pull Request: Copy Link or Thread",
+      "Sidebar: Toggle",
+    ]);
+    expect(conflictsFor("ctrl+x")).toEqual(["Chat: New", "Chat: New Local", "Sidebar: Toggle"]);
+    expect(
+      keybindingConflictLabels(
+        rows,
+        { rowId: "new", key: "ctrl+x ctrl+s", when: "" },
+        "Linux x86_64",
+      ),
+    ).toEqual(["Pull Request: Copy Link or Thread", "Sidebar: Toggle"]);
+  });
+
   it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {
     const rows = buildKeybindingRows(
       compileResolvedKeybindingsConfig([
@@ -311,5 +344,25 @@ describe("KeybindingsSettings.logic", () => {
     );
 
     expect(rows.map((row) => row.conflicts)).toEqual([[], []]);
+  });
+
+  it("edits a recorded shortcut one step at a time", () => {
+    expect(setKeybindingStep("ctrl+x", 1, "ctrl+x")).toBe("ctrl+x ctrl+x");
+    expect(setKeybindingStep("ctrl+x  h", 1, "mod++")).toBe("ctrl+x mod++");
+    expect(setKeybindingStep("ctrl + x", 0, "esc")).toBe("esc");
+    expect(setKeybindingStep("", 0, "enter")).toBe("enter");
+    expect(setKeybindingStep("a b c d", 4, "e")).toBe("a b c d");
+    expect(setKeybindingStep("a", 2, "c")).toBe("a");
+
+    expect(removeKeybindingStep("ctrl+x ctrl+x h", 1)).toBe("ctrl+x h");
+    expect(removeKeybindingStep("ctrl+x h", 1)).toBe("ctrl+x");
+    expect(removeKeybindingStep("backspace", 0)).toBe("");
+
+    expect(["", "a", "a b c", "a b c d"].map(canAddKeybindingStep)).toEqual([
+      false,
+      true,
+      true,
+      false,
+    ]);
   });
 });

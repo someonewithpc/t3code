@@ -25,7 +25,14 @@ import {
   keybindingValueForCommand,
   decodeProjectScriptKeybindingRule,
 } from "~/lib/projectScriptKeybindings";
-import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSettings.logic";
+import {
+  keybindingFromKeyboardEvent,
+  setKeybindingStep,
+} from "~/components/settings/KeybindingsSettings.logic";
+import {
+  type KeybindingStepCapture,
+  KeybindingStepsEditor,
+} from "~/components/settings/KeybindingStepsEditor";
 import { commandForProjectScript, nextProjectScriptId } from "~/projectScripts";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useComposerMenuState } from "./chat/useComposerMenuState";
@@ -280,6 +287,7 @@ function ProjectScriptEditorForm({
   const [runOnSettle, setRunOnSettle] = useState(request.initial.runOnSettle);
   const [stopOnSettle, setStopOnSettle] = useState(request.initial.stopOnSettle ?? false);
   const [keybinding, setKeybinding] = useState(request.initial.keybinding ?? "");
+  const [recordingStep, setRecordingStep] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState(request.initial.previewUrl ?? "");
   const [autoOpenPreview, setAutoOpenPreview] = useState(request.initial.autoOpenPreview);
   const [isSaving, setIsSaving] = useState(false);
@@ -303,18 +311,19 @@ function ProjectScriptEditorForm({
     onClose();
   };
 
-  const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (!readEnvironmentScope(environmentId, editScope)) return;
-    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
-    if (event.key === "Tab") return;
+  const captureKeybinding = (
+    event: KeyboardEvent<HTMLInputElement>,
+    step: number,
+  ): KeybindingStepCapture => {
+    if (!readEnvironmentScope(environmentId, editScope)) return null;
+    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return null;
+    if (event.key === "Tab") return null;
     event.preventDefault();
-    if (event.key === "Backspace" || event.key === "Delete") {
-      setKeybinding("");
-      return;
-    }
     const next = keybindingFromKeyboardEvent(event, navigator.platform);
-    if (!next) return;
-    setKeybinding(next);
+    if (!next) return null;
+    setKeybinding(setKeybindingStep(keybinding, step, next));
+    setRecordingStep(null);
+    return "recorded";
   };
 
   const submit = async (event: FormEvent) => {
@@ -466,17 +475,21 @@ function ProjectScriptEditorForm({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="script-keybinding">Keybinding</Label>
-              <Input
-                disabled={!canWriteSettings}
-                id="script-keybinding"
-                placeholder="Press shortcut"
+              <KeybindingStepsEditor
                 value={keybinding}
-                readOnly
-                onKeyDown={captureKeybinding}
+                recordingStep={recordingStep}
+                label="this action"
+                placeholder="Press shortcut"
+                minSteps={0}
+                disabled={!canWriteSettings}
+                fieldId="script-keybinding"
+                onRecordingStepChange={setRecordingStep}
+                onRecorderKeyDown={captureKeybinding}
+                onChange={setKeybinding}
               />
               <p className="text-xs text-muted-foreground">
-                Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
-                environment-wide. Projects using the same action share its shortcut.
+                Press a shortcut, then + to add keys for a sequence such as <code>ctrl+x h</code>.
+                Shortcuts are environment-wide. Projects using the same action share its shortcut.
               </p>
             </div>
             <div className="space-y-1.5">

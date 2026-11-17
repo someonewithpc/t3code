@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import {
   isMacPlatform,
+  keybindingRuleSteps,
   matchesKeybindingShortcut,
   matchesKeybindingShortcutModifiers,
   normalizeEventKey,
@@ -27,7 +28,13 @@ export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
 
 export interface ShortcutEventLike extends SharedShortcutEventLike {
   target?: EventTarget | null;
+  /** Set on React keyboard events. */
+  nativeEvent?: object;
 }
+
+export type KeySequenceMatch =
+  | { readonly type: "prefix" }
+  | { readonly type: "command"; readonly binding: ResolvedKeybindingRule };
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
@@ -110,7 +117,24 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
+function keybindingStepsConflictKey(
+  steps: ReadonlyArray<KeybindingShortcut>,
+  platform = navigator.platform,
+): string {
+  return steps.map((shortcut) => shortcutConflictKey(shortcut, platform)).join(" ");
+}
+
+function stepsForContext(
+  binding: ResolvedKeybindingRule,
+  context: ShortcutMatchContext,
+): ReadonlyArray<KeybindingShortcut> {
+  return "shortcut" in binding ? [shortcutForContext(binding, context)] : binding.sequence;
+}
+
+function shortcutForContext(
+  binding: Extract<ResolvedKeybindingRule, { shortcut: KeybindingShortcut }>,
+  context: ShortcutMatchContext,
+) {
   const shortcut = binding.shortcut;
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
@@ -129,34 +153,49 @@ function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMa
   return shortcut;
 }
 
+/** The steps of each binding that would run the command; a single chord is one step. */
+function effectiveKeybindingsForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): ReadonlyArray<KeybindingShortcut>[] {
+  const platform = resolvePlatform(options);
+  const context = resolveContext(options);
+  const active: Array<{ binding: ResolvedKeybindingRule; conflictKey: string }> = [];
+  // A prefix key shadows any shorter binding on the same keys, whatever the rule order.
+  const prefixKeys = new Set<string>();
+  for (const binding of keybindings) {
+    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    const steps = stepsForContext(binding, context);
+    for (let length = 1; length < steps.length; length += 1) {
+      prefixKeys.add(keybindingStepsConflictKey(steps.slice(0, length), platform));
+    }
+    active.push({ binding, conflictKey: keybindingStepsConflictKey(steps, platform) });
+  }
+
+  const claimedKeys = new Set<string>(prefixKeys);
+  const effective: ReadonlyArray<KeybindingShortcut>[] = [];
+  for (let index = active.length - 1; index >= 0; index -= 1) {
+    const entry = active[index];
+    if (!entry || claimedKeys.has(entry.conflictKey)) continue;
+    claimedKeys.add(entry.conflictKey);
+    if (entry.binding.command === command) {
+      effective.push(stepsForContext(entry.binding, context));
+    }
+  }
+
+  return effective;
+}
+
+/** Single-chord bindings only, for consumers that cannot follow a key sequence. */
 export function effectiveShortcutsForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
 ): KeybindingShortcut[] {
-  const platform = resolvePlatform(options);
-  const context = resolveContext(options);
-  const claimedShortcuts = new Set<string>();
-  const effective: KeybindingShortcut[] = [];
-
-  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
-    const binding = keybindings[index];
-    if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
-
-    const shortcut = shortcutForContext(binding, context);
-    const conflictKey = shortcutConflictKey(shortcut, platform);
-    if (claimedShortcuts.has(conflictKey)) {
-      continue;
-    }
-
-    claimedShortcuts.add(conflictKey);
-    if (binding.command === command) {
-      effective.push(shortcut);
-    }
-  }
-
-  return effective;
+  return effectiveKeybindingsForCommand(keybindings, command, options).flatMap((steps) =>
+    steps.length === 1 && steps[0] ? [steps[0]] : [],
+  );
 }
 
 function findEffectiveShortcutForCommand(
@@ -176,25 +215,82 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
+const completedKeySequences = new WeakMap<object, ResolvedKeybindingRule>();
+
+/**
+ * A keydown that stands in for a finished key sequence. Its key is "Unidentified", so widgets
+ * that read raw keys ignore it, while every `resolveShortcutCommand` caller sees the command.
+ */
+export function keySequenceCommandEvent(binding: ResolvedKeybindingRule): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key: "Unidentified",
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+  completedKeySequences.set(event, binding);
+  return event;
+}
+
+export function isKeySequenceCommandEvent(event: ShortcutEventLike): boolean {
+  return completedKeySequences.has(event.nativeEvent ?? event);
+}
+
+function sameBinding(left: ResolvedKeybindingRule, right: ResolvedKeybindingRule): boolean {
+  return (
+    left === right ||
+    (left.command === right.command &&
+      JSON.stringify([keybindingRuleSteps(left), left.whenAst]) ===
+        JSON.stringify([keybindingRuleSteps(right), right.whenAst]))
+  );
+}
+
+/**
+ * Matches the keys pressed so far against every rule. A rule that needs more keys wins over one
+ * that is already complete, so a prefix key shadows a shorter binding.
+ */
+export function resolveKeySequence(
+  keys: ReadonlyArray<ShortcutEventLike>,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): KeySequenceMatch | null {
+  const lastKey = keys.at(-1);
+  if (!lastKey) return null;
+  const platform = resolvePlatform(options);
+  const context = resolveContext(options);
+  if (options?.context?.editableFocus === undefined && typeof document !== "undefined") {
+    context.editableFocus = isEditableFocused(lastKey.target ?? document.activeElement);
+  }
+
+  let completed: ResolvedKeybindingRule | null = null;
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (!binding) continue;
+    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    const steps = stepsForContext(binding, context);
+    if (steps.length < keys.length) continue;
+    const matches = keys.every((key, step) => {
+      const shortcut = steps[step];
+      return shortcut !== undefined && matchesKeybindingShortcut(key, shortcut, platform);
+    });
+    if (!matches) continue;
+    if (steps.length > keys.length) return { type: "prefix" };
+    completed ??= binding;
+  }
+  return completed ? { type: "command", binding: completed } : null;
+}
+
 export function resolveShortcutCommand(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
-  const platform = resolvePlatform(options);
-  const context = resolveContext(options);
-  if (options?.context?.editableFocus === undefined && typeof document !== "undefined") {
-    context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
+  const sequence = completedKeySequences.get(event.nativeEvent ?? event);
+  if (sequence) {
+    return keybindings.some((binding) => sameBinding(binding, sequence)) ? sequence.command : null;
   }
-
-  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
-    const binding = keybindings[index];
-    if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
-    return binding.command;
-  }
-  return null;
+  const match = resolveKeySequence([event], keybindings, options);
+  return match?.type === "command" ? match.binding.command : null;
 }
 
 export function resolveChatShortcutCommand(
@@ -251,6 +347,13 @@ export function formatShortcutLabel(
   return parts.join("+");
 }
 
+export function formatKeybindingStepsLabel(
+  steps: ReadonlyArray<KeybindingShortcut>,
+  platform = navigator.platform,
+): string {
+  return steps.map((shortcut) => formatShortcutLabel(shortcut, platform)).join(" ");
+}
+
 export function shortcutLabelForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand | null,
@@ -262,8 +365,8 @@ export function shortcutLabelForCommand(
       ? ({ platform: options } satisfies ResolvedShortcutLabelOptions)
       : options;
   const platform = resolvePlatform(resolvedOptions);
-  const shortcut = findEffectiveShortcutForCommand(keybindings, command, resolvedOptions);
-  return shortcut ? formatShortcutLabel(shortcut, platform) : null;
+  const steps = effectiveKeybindingsForCommand(keybindings, command, resolvedOptions)[0];
+  return steps ? formatKeybindingStepsLabel(steps, platform) : null;
 }
 
 export function threadJumpCommandForIndex(index: number): ThreadJumpKeybindingCommand | null {

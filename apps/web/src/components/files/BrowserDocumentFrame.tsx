@@ -311,11 +311,18 @@ export function HtmlRenderDocument(props: {
     shiftKey: shortcut.shiftKey,
     altKey: shortcut.altKey,
   });
-  const blocked = [...keybindings, ...(environmentKeybindings ?? [])]
-    .filter((binding) => !HTML_RENDER_SHORTCUT_COMMANDS.has(binding.command))
-    .map((binding) => resolve(binding.shortcut));
+  // The frame cannot replay a key sequence, so a sequence only blocks its first key.
+  const blocked = [...keybindings, ...(environmentKeybindings ?? [])].flatMap((binding) =>
+    "sequence" in binding
+      ? binding.sequence.slice(0, 1).map(resolve)
+      : HTML_RENDER_SHORTCUT_COMMANDS.has(binding.command)
+        ? []
+        : [resolve(binding.shortcut)],
+  );
   const shortcutsByKey = new Map<string, HtmlRenderShortcut>();
-  for (const { command, shortcut } of keybindings) {
+  for (const binding of keybindings) {
+    if (!("shortcut" in binding)) continue;
+    const { command, shortcut } = binding;
     if (
       HTML_RENDER_SHORTCUT_COMMANDS.has(command) &&
       (shortcut.metaKey || shortcut.ctrlKey || shortcut.modKey)

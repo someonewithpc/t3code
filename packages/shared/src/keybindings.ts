@@ -2,6 +2,7 @@ import {
   type KeybindingRule,
   type KeybindingShortcut,
   type KeybindingWhenNode,
+  MAX_KEYBINDING_SEQUENCE_STEPS,
   MAX_KEYBINDINGS_COUNT,
   MAX_WHEN_EXPRESSION_DEPTH,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
@@ -156,12 +157,40 @@ function normalizeKeyToken(token: string): string {
   return token;
 }
 
+/**
+ * Parses "ctrl+x h" into its steps. Whitespace next to a `+` stays inside the step, so
+ * "ctrl + x" is still the one chord it always was.
+ */
+export function parseKeybindingSequence(value: string): KeybindingShortcut[] | null {
+  const steps = splitKeybindingSequence(value);
+  if (steps.length === 0 || steps.length > MAX_KEYBINDING_SEQUENCE_STEPS) return null;
+  const shortcuts: KeybindingShortcut[] = [];
+  for (const step of steps) {
+    const shortcut = parseKeybindingStep(step);
+    if (!shortcut) return null;
+    shortcuts.push(shortcut);
+  }
+  return shortcuts;
+}
+
+/** The step strings of "ctrl+x h", unparsed, with whitespace around `+` removed. */
+export function splitKeybindingSequence(value: string): string[] {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? [] : trimmed.replace(/\s*\+\s*/g, "+").split(/\s+/);
+}
+
+/** A single chord; null for a key sequence. */
 export function parseKeybindingShortcut(value: string): KeybindingShortcut | null {
-  const rawTokens = value
-    .toLowerCase()
-    .split("+")
-    .map((token) => token.trim());
-  const tokens = [...rawTokens];
+  const steps = parseKeybindingSequence(value);
+  return steps?.length === 1 ? steps[0]! : null;
+}
+
+export function keybindingRuleSteps(rule: ResolvedKeybindingRule): readonly KeybindingShortcut[] {
+  return "shortcut" in rule ? [rule.shortcut] : rule.sequence;
+}
+
+function parseKeybindingStep(value: string): KeybindingShortcut | null {
+  const tokens = value.toLowerCase().split("+");
   let trailingEmptyCount = 0;
   while (tokens[tokens.length - 1] === "") {
     trailingEmptyCount += 1;
@@ -355,22 +384,23 @@ export function parseKeybindingWhenExpression(expression: string): KeybindingWhe
 }
 
 export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKeybindingRule | null {
-  const shortcut = parseKeybindingShortcut(rule.key);
-  if (!shortcut) return null;
+  const steps = parseKeybindingSequence(rule.key);
+  if (!steps) return null;
+  const keys = steps.length === 1 ? { shortcut: steps[0]! } : { sequence: steps };
 
   if (rule.when !== undefined) {
     const whenAst = parseKeybindingWhenExpression(rule.when);
     if (!whenAst) return null;
     return {
       command: rule.command,
-      shortcut,
+      ...keys,
       whenAst,
     };
   }
 
   return {
     command: rule.command,
-    shortcut,
+    ...keys,
   };
 }
 
