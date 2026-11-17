@@ -87,6 +87,10 @@ export function installCommandPaletteCommands(
         const { theme, themeHalves, resolvedTheme } = getThemeSnapshot();
         toggleThemeEditorForTheme({ theme, themeHalves, initialAppearance: resolvedTheme });
       },
+      "view.reload": (event) => {
+        consume(event);
+        if (!event.repeat) window.location.reload();
+      },
       "usage.open": (event) => {
         consume(event);
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
