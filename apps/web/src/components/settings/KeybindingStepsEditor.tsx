@@ -2,7 +2,7 @@ import { PlusIcon, XIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, type Ref, useRef } from "react";
 import { parseKeybindingShortcut, splitKeybindingSequence } from "@t3tools/shared/keybindings";
 
-import { formatShortcutLabel } from "../../keybindings";
+import { formatShortcutKeyCaps, formatShortcutLabel } from "../../keybindings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";
@@ -32,33 +32,12 @@ export function KeybindingPill({ value }: { value: string }) {
 }
 
 function KeybindingStepPill({ value }: { value: string }) {
-  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
-  const seenParts = new Map<string, number>();
-  const parts = value.split("+").map((part) => {
-    const seen = seenParts.get(part) ?? 0;
-    seenParts.set(part, seen + 1);
-    return { part, key: seen === 0 ? part : `${part}-${seen}` };
-  });
+  const shortcut = parseKeybindingShortcut(value);
+  const caps = shortcut ? formatShortcutKeyCaps(shortcut) : [value];
   return (
     <KbdGroup>
-      {parts.map(({ part, key }) => (
-        <Kbd key={key}>
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
-        </Kbd>
+      {caps.map((cap) => (
+        <Kbd key={cap}>{cap}</Kbd>
       ))}
     </KbdGroup>
   );

@@ -3,6 +3,7 @@ import {
   compileResolvedKeybindingsConfig,
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
+  parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
 import {
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import {
   effectiveShortcutsForCommand,
+  formatShortcutKeyCaps,
   formatShortcutLabel,
   isRichTextBoldShortcut,
   isTerminalNewShortcut,
@@ -1045,5 +1047,25 @@ describe("Usage shortcuts", () => {
         platform: "Linux",
       }),
     );
+  });
+});
+
+describe("formatShortcutKeyCaps", () => {
+  const caps = (value: string, platform: string) => {
+    const shortcut = parseKeybindingShortcut(value);
+    assert.isNotNull(shortcut);
+    return formatShortcutKeyCaps(shortcut!, platform);
+  };
+
+  it("labels modifiers for the platform", () => {
+    assert.deepEqual(caps("ctrl+space", "Linux"), ["Ctrl", "Space"]);
+    assert.deepEqual(caps("meta+k", "Linux"), ["Meta", "K"]);
+    assert.deepEqual(caps("mod+shift+f", "Linux"), ["Ctrl", "\u21e7", "F"]);
+    assert.deepEqual(caps("mod+shift+f", "MacIntel"), ["\u21e7", "\u2318", "F"]);
+    assert.deepEqual(caps("ctrl+alt+b", "MacIntel"), ["\u2303", "\u2325", "B"]);
+  });
+
+  it("keeps a literal + key", () => {
+    assert.deepEqual(caps("ctrl++", "Linux"), ["Ctrl", "+"]);
   });
 });

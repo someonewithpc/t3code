@@ -347,6 +347,21 @@ export function formatShortcutLabel(
   return parts.join("+");
 }
 
+/** One label per key cap, in the order formatShortcutLabel joins them. */
+export function formatShortcutKeyCaps(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): string[] {
+  const mac = isMacPlatform(platform);
+  const caps: string[] = [];
+  if (shortcut.ctrlKey || (shortcut.modKey && !mac)) caps.push(mac ? "\u2303" : "Ctrl");
+  if (shortcut.altKey) caps.push(mac ? "\u2325" : "Alt");
+  if (shortcut.shiftKey) caps.push("\u21e7");
+  if (shortcut.metaKey || (shortcut.modKey && mac)) caps.push(mac ? "\u2318" : "Meta");
+  caps.push(formatShortcutKeyLabel(shortcut.key));
+  return caps;
+}
+
 export function formatKeybindingStepsLabel(
   steps: ReadonlyArray<KeybindingShortcut>,
   platform = navigator.platform,
