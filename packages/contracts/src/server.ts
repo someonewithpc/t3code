@@ -18,6 +18,9 @@ import {
 } from "./baseSchemas.ts";
 import {
   KeybindingCommand,
+  KeybindingEditTarget,
+  KeybindingProfileId,
+  KeybindingProfileSummaries,
   KeybindingValue,
   KeybindingWhen,
   ResolvedKeybindingsConfig,
@@ -49,6 +52,13 @@ export const ServerConfigIssue = Schema.Union([
 export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
 const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
+
+// `keybindings` is already the active profile resolved; these only feed the Settings picker.
+// Servers from before profiles omit them.
+const KeybindingProfileFields = {
+  keybindingProfiles: Schema.optionalKey(KeybindingProfileSummaries),
+  activeKeybindingProfile: Schema.optionalKey(KeybindingProfileId),
+};
 
 export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
 export type ServerProviderState = typeof ServerProviderState.Type;
@@ -696,6 +706,7 @@ export const ServerConfig = Schema.Struct({
   hostname: Schema.optionalKey(Schema.String),
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
+  ...KeybindingProfileFields,
   issues: ServerConfigIssues,
   providers: ServerProviders,
   availableEditors: ForwardCompatibleArray(EditorId),
@@ -771,25 +782,34 @@ const ServerUpsertKeybindingReplaceTarget = Schema.Struct({
   when: Schema.optional(KeybindingWhen),
 });
 
+// Clients from before profiles send no `profile`, and the server edits the active one.
 export const ServerUpsertKeybindingInput = Schema.Struct({
   key: KeybindingValue,
   command: KeybindingCommand,
   when: Schema.optional(KeybindingWhen),
   replace: Schema.optional(ServerUpsertKeybindingReplaceTarget),
+  profile: Schema.optional(KeybindingEditTarget),
 });
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;
 
-export const ServerRemoveKeybindingInput = ServerUpsertKeybindingReplaceTarget;
+export const ServerRemoveKeybindingInput = Schema.Struct({
+  ...ServerUpsertKeybindingReplaceTarget.fields,
+  profile: Schema.optional(KeybindingEditTarget),
+});
 export type ServerRemoveKeybindingInput = typeof ServerRemoveKeybindingInput.Type;
 
 export const ServerUpsertKeybindingResult = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
+  ...KeybindingProfileFields,
   issues: ServerConfigIssues,
 });
 export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.Type;
 
 export const ServerRemoveKeybindingResult = ServerUpsertKeybindingResult;
 export type ServerRemoveKeybindingResult = typeof ServerRemoveKeybindingResult.Type;
+
+export const ServerMutateKeybindingProfileResult = ServerUpsertKeybindingResult;
+export type ServerMutateKeybindingProfileResult = typeof ServerMutateKeybindingProfileResult.Type;
 
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
@@ -800,6 +820,7 @@ export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
 
 export const ServerConfigKeybindingsUpdatedPayload = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
+  ...KeybindingProfileFields,
   issues: ServerConfigIssues,
 });
 export type ServerConfigKeybindingsUpdatedPayload =

@@ -1859,6 +1859,8 @@ export const layerWsRpc = (
           hostname: yield* HostProcess.Hostname,
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
+          keybindingProfiles: keybindingsConfig.keybindingProfiles,
+          activeKeybindingProfile: keybindingsConfig.activeKeybindingProfile,
           issues: keybindingsConfig.issues,
           providers,
           ...discovery,
@@ -2686,6 +2688,8 @@ export const layerWsRpc = (
           Effect.fnUntraced(function* (rule) {
             return yield* keybindings.removeKeybindingRule(rule);
           }),
+        [WS_METHODS.serverMutateKeybindingProfile]: (mutation) =>
+          keybindings.mutateProfile(mutation),
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
@@ -3379,10 +3383,7 @@ export const layerWsRpc = (
                 Stream.map((event) => ({
                   version: 1 as const,
                   type: "keybindingsUpdated" as const,
-                  payload: {
-                    keybindings: event.keybindings,
-                    issues: event.issues,
-                  },
+                  payload: event,
                 })),
               );
               const providerStatuses = Stream.zipLatestWith(

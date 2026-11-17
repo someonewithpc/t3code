@@ -1,11 +1,15 @@
-import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
+import {
+  KeybindingCommand,
+  KeybindingRule,
+  KeybindingsConfig,
+  type ResolvedKeybindingRule,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -17,7 +21,7 @@ import { KeybindingsConfigError, MAX_KEYBINDINGS_COUNT } from "@t3tools/contract
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const encodeKeybindingsConfigJson = Schema.encodeEffect(KeybindingsConfigJson);
-const decodeKeybindingsConfigJson = Schema.decodeUnknownEffect(KeybindingsConfigJson);
+const decodeKeybindingsConfig = Schema.decodeUnknownEffect(KeybindingsConfig);
 const layerKeybindings = () => {
   return Keybindings.layer.pipe(
     Layer.provideMerge(
@@ -45,12 +49,26 @@ const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRu
     yield* fileSystem.writeFileString(configPath, encoded);
   });
 
-const readKeybindingsConfig = (configPath: string) =>
+const readKeybindingsFile = (configPath: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const rawConfig = yield* fileSystem.readFileString(configPath);
-    return yield* decodeKeybindingsConfigJson(rawConfig);
+    return JSON.parse(yield* fileSystem.readFileString(configPath));
   });
+
+/** The active custom profile's own rules, as written. */
+const readActiveProfileEntries = (configPath: string) =>
+  Effect.gen(function* () {
+    const file = yield* readKeybindingsFile(configPath);
+    return (file.profiles[file.profile]?.keybindings ?? []) as unknown[];
+  });
+
+const readKeybindingsConfig = (configPath: string) =>
+  Effect.flatMap(readActiveProfileEntries(configPath), decodeKeybindingsConfig);
+
+const commandRules = (
+  rules: ReadonlyArray<ResolvedKeybindingRule>,
+  command: KeybindingCommand,
+): ReadonlyArray<ResolvedKeybindingRule> => rules.filter((rule) => rule.command === command);
 
 it.layer(NodeServices.layer)("keybindings", (it) => {
   it.effect("parses shortcuts including plus key", () =>
@@ -172,19 +190,22 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }),
   );
 
-  it.effect("bootstraps default keybindings when config file is missing", () =>
+  it.effect("creates a config without defaults when the file is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       assert.isFalse(yield* fs.exists(keybindingsConfigPath));
 
-      yield* Effect.gen(function* () {
-        const keybindings = yield* Keybindings.Keybindings;
-        yield* keybindings.syncDefaultKeybindingsOnStartup;
-      });
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
 
-      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.deepEqual(persisted, SharedKeybindings.DEFAULT_KEYBINDINGS);
+      assert.deepEqual(yield* readKeybindingsFile(keybindingsConfigPath), {
+        profile: "default",
+        profiles: {},
+      });
+      const state = yield* keybindings.loadConfigState;
+      assert.deepEqual(state.keybindings, SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS);
+      assert.equal(state.activeKeybindingProfile, "default");
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
@@ -261,7 +282,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
   );
 
   it.effect(
-    "upserts missing default keybindings on startup without overriding existing command rules",
+    "migrates a bare array to the profile format, keeping the commands the user changed",
     () =>
       Effect.gen(function* () {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
@@ -274,27 +295,51 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
             command: "script.custom-composer.run",
             when: "composerFocus",
           },
+          // Older builds wrote this default; a newer when clause replaced it.
+          { key: "mod+1", command: "thread.jump.1", when: "isDesktop" },
         ]);
-
-        const keybindings = yield* Keybindings.Keybindings;
-        yield* keybindings.syncDefaultKeybindingsOnStartup;
-
-        const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-        const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
-
-        const persistedToggle = byCommand.get("terminal.toggle");
-        assert.isNotNull(persistedToggle);
-        assert.equal(persistedToggle?.key, "mod+shift+y");
-        assert.isFalse(
-          persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
+        const original = yield* (yield* FileSystem.FileSystem).readFileString(
+          keybindingsConfigPath,
         );
 
-        for (const defaultRule of SharedKeybindings.DEFAULT_KEYBINDINGS) {
-          assert.isTrue(byCommand.has(defaultRule.command), `expected ${defaultRule.command}`);
-        }
-        assert.isTrue(byCommand.has("script.run-tests.run"));
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.migrateConfigOnStartup;
+
+        const file = yield* readKeybindingsFile(keybindingsConfigPath);
+        assert.equal(file.profile, "my-custom");
+        assert.deepEqual(Object.keys(file.profiles), ["my-custom"]);
+        assert.deepInclude(file.profiles["my-custom"], { name: "Custom", extends: "default" });
+        assert.notProperty(file, "keybindings");
+        assert.equal(
+          yield* (yield* FileSystem.FileSystem).readFileString(
+            `${keybindingsConfigPath}.pre-profiles`,
+          ),
+          original,
+        );
+        const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+        assert.deepEqual(
+          persisted.map((entry) => entry.command),
+          [
+            "terminal.toggle",
+            "script.run-tests.run",
+            "script.custom-panel.run",
+            "script.custom-composer.run",
+          ],
+        );
 
         const configState = yield* keybindings.loadConfigState;
+        assert.deepEqual(
+          commandRules(configState.keybindings, "terminal.toggle").map(
+            (entry) => "shortcut" in entry && entry.shortcut.key,
+          ),
+          ["y"],
+        );
+        for (const defaultRule of SharedKeybindings.DEFAULT_KEYBINDINGS) {
+          assert.isTrue(
+            configState.keybindings.some((entry) => entry.command === defaultRule.command),
+            `expected ${defaultRule.command}`,
+          );
+        }
         assert.deepEqual(
           configState.keybindings
             .filter(
@@ -318,15 +363,22 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
       yield* writeKeybindingsConfig(keybindingsConfigPath, [existing]);
 
-      yield* keybindings.syncDefaultKeybindingsOnStartup;
-      assert.deepStrictEqual(yield* backgroundRules, [
-        { key: "mod+enter", command: "composer.sendBackground", when },
-        existing,
-      ]);
+      yield* keybindings.migrateConfigOnStartup;
+      // With the late default nothing differs from the defaults, so no profile is created.
+      assert.deepEqual(yield* readKeybindingsFile(keybindingsConfigPath), {
+        profile: "default",
+        profiles: {},
+      });
+      assert.deepStrictEqual(yield* backgroundRules, []);
+      assert.deepEqual(
+        commandRules((yield* keybindings.loadConfigState).keybindings, "composer.sendBackground"),
+        commandRules(SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS, "composer.sendBackground"),
+      );
 
+      // Without the late default the rules still match a former default, so no profile either.
       yield* writeKeybindingsConfig(keybindingsConfigPath, [existing]);
-      yield* keybindings.syncDefaultKeybindingsOnStartup;
-      assert.deepStrictEqual(yield* backgroundRules, [existing]);
+      yield* keybindings.migrateConfigOnStartup;
+      assert.deepStrictEqual(yield* backgroundRules, []);
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
@@ -341,7 +393,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       } as const;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [custom]);
 
-      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      yield* keybindings.migrateConfigOnStartup;
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       assert.deepStrictEqual(
         persisted.filter((entry) => entry.command === "composer.sendBackground"),
@@ -360,54 +412,78 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         key: "mod+alt+f1",
         command: `script.filler-${index}.run` as const,
       }));
-      const hasModEnter = Effect.map(readKeybindingsConfig(keybindingsConfigPath), (rules) =>
-        rules.some(
-          (entry) => entry.command === "composer.sendBackground" && entry.key === "mod+enter",
+      const hasModEnter = Effect.map(keybindings.loadConfigState, ({ keybindings: rules }) =>
+        commandRules(rules, "composer.sendBackground").some(
+          (entry) =>
+            "shortcut" in entry && entry.shortcut.key === "enter" && !entry.shortcut.altKey,
         ),
       );
 
       yield* writeKeybindingsConfig(keybindingsConfigPath, [existing, ...fillers]);
-      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      yield* keybindings.migrateConfigOnStartup;
       assert.isFalse(yield* hasModEnter);
 
       yield* writeKeybindingsConfig(keybindingsConfigPath, [existing]);
-      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      yield* keybindings.migrateConfigOnStartup;
       assert.isTrue(yield* hasModEnter);
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
-  it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
-    const messages: string[] = [];
-    const logger = Logger.make(({ message }) => {
-      messages.push(String(message));
-    });
-
-    return Effect.gen(function* () {
+  it.effect("keeps unassigned defaults and unknown commands when migrating a bare array", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "script.custom-action.run" },
-      ]);
-
-      yield* Effect.gen(function* () {
-        const keybindings = yield* Keybindings.Keybindings;
-        yield* keybindings.syncDefaultKeybindingsOnStartup;
-      });
-
-      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
-      assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
-
-      assert.isTrue(
-        messages.some((message) =>
-          message.includes("skipping default keybinding due to shortcut conflict"),
+      const keybindings = yield* Keybindings.Keybindings;
+      const unassigned = { key: "f6", command: "workspace.focusNext", when: "false" } as const;
+      const rebound = { key: "mod+g", command: "terminal.toggle" } as const;
+      const fromNewerBuild = { key: "ctrl+k", command: "text.killLine", when: "editableFocus" };
+      const legacy = [
+        ...SharedKeybindings.DEFAULT_KEYBINDINGS.filter(
+          (rule) =>
+            !(rule.command === "workspace.focusNext" && rule.key === "f6") &&
+            rule.command !== "terminal.toggle",
         ),
+        unassigned,
+        rebound,
+        fromNewerBuild,
+      ];
+      yield* fs.writeFileString(keybindingsConfigPath, JSON.stringify(legacy));
+
+      yield* keybindings.migrateConfigOnStartup;
+
+      // focusNext keeps its other default, or the unassign would drop mod+f6 along with f6.
+      assert.deepEqual(yield* readActiveProfileEntries(keybindingsConfigPath), [
+        { key: "mod+f6", command: "workspace.focusNext" },
+        unassigned,
+        rebound,
+        fromNewerBuild,
+      ]);
+      const state = yield* keybindings.loadConfigState;
+      assert.deepEqual(
+        commandRules(state.keybindings, "workspace.focusNext"),
+        SharedKeybindings.compileResolvedKeybindingsConfig([
+          { key: "mod+f6", command: "workspace.focusNext" },
+          unassigned,
+        ]),
       );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layerKeybindings(), Logger.layer([logger], { mergeWithExisting: false })),
-      ),
-    );
-  });
+      assert.deepEqual(
+        commandRules(state.keybindings, "terminal.toggle"),
+        SharedKeybindings.compileResolvedKeybindingsConfig([rebound]),
+      );
+      assert.deepEqual(
+        commandRules(state.keybindings, "sidebar.toggle"),
+        commandRules(SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS, "sidebar.toggle"),
+      );
+      assert.deepEqual(
+        state.issues.map((issue) => issue.kind),
+        ["keybindings.invalid-entry"],
+      );
+
+      const migrated = yield* fs.readFileString(keybindingsConfigPath);
+      yield* keybindings.migrateConfigOnStartup;
+      assert.equal(yield* fs.readFileString(keybindingsConfigPath), migrated);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
 
   it.effect("appends additional custom keybindings for the same command", () =>
     Effect.gen(function* () {
@@ -505,7 +581,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       yield* writeKeybindingsConfig(
         keybindingsConfigPath,
-        Array.from({ length: MAX_KEYBINDINGS_COUNT }, (_, index) => ({
+        // Room for exactly the two rules the unassign copies from the defaults.
+        Array.from({ length: MAX_KEYBINDINGS_COUNT - 2 }, (_, index) => ({
           key: "mod+alt+f1",
           command: `script.filler-${index}.run` as const,
         })),
@@ -530,19 +607,27 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         removed.keybindings.filter((rule) => rule.command === target.command),
         expected,
       );
-      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      yield* keybindings.migrateConfigOnStartup;
       const snapshot = yield* keybindings.getSnapshot;
       assert.deepEqual(
         snapshot.keybindings.filter((rule) => rule.command === target.command),
         expected,
       );
-      const restored = yield* keybindings.upsertKeybindingRule({
+      yield* keybindings.upsertKeybindingRule({
         ...target,
         replace: { ...target, when: "false" },
       });
-      assert.deepEqual(
-        restored.keybindings.filter((rule) => rule.command === target.command),
-        SharedKeybindings.compileResolvedKeybindingsConfig([...siblings, target]),
+      // Back to the defaults, so the profile supplies the command again.
+      assert.isFalse(
+        (yield* readKeybindingsConfig(keybindingsConfigPath)).some(
+          (rule) => rule.command === target.command,
+        ),
+      );
+      assertFailure(
+        yield* toDetailResult(
+          keybindings.upsertKeybindingRule({ key: "mod+alt+f2", command: "workspace.focusNext" }),
+        ),
+        `a profile holds at most ${MAX_KEYBINDINGS_COUNT} rules`,
       );
     }).pipe(Effect.provide(layerKeybindings())),
   );
@@ -562,7 +647,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         ]),
       );
       const keybindings = yield* Keybindings.Keybindings;
-      const persisted = Effect.map(fs.readFileString(keybindingsConfigPath), JSON.parse);
+      const persisted = readActiveProfileEntries(keybindingsConfigPath);
 
       const saved = yield* keybindings.upsertKeybindingRule({
         key: "mod+shift+r",
@@ -667,7 +752,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           command: "script.run-tests.run",
         });
       }).pipe(toDetailResult);
-      assertFailure(result, "expected JSON array");
+      assertFailure(result, "expected a JSON object or array");
 
       const persistedRaw = yield* fs.readFileString(keybindingsConfigPath);
       assert.equal(persistedRaw, "{ not-json");
@@ -762,5 +847,383 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           ),
         );
       }).pipe(Effect.scoped, Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("copies a command's defaults on its first edit and drops them once they match", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+
+      yield* keybindings.upsertKeybindingRule({ key: "ctrl+g", command: "terminal.toggle" });
+      assert.deepEqual(yield* readKeybindingsConfig(keybindingsConfigPath), [
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "ctrl+g", command: "terminal.toggle" },
+      ]);
+
+      yield* keybindings.removeKeybindingRule({ key: "ctrl+g", command: "terminal.toggle" });
+      assert.deepEqual(yield* readKeybindingsConfig(keybindingsConfigPath), []);
+
+      // Removing the last inherited rule must not let the profile hand it back.
+      yield* keybindings.removeKeybindingRule({ key: "mod+j", command: "terminal.toggle" });
+      assert.deepEqual(yield* readKeybindingsConfig(keybindingsConfigPath), [
+        { key: "mod+j", command: "terminal.toggle", when: "false" },
+      ]);
+      // Only the first edit copied the built-in; the rest stayed in that copy.
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.equal(file.profile, "my-default-copy");
+      assert.deepEqual(Object.keys(file.profiles), ["my-default-copy"]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("copies a built-in profile on every edit made while it is active", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+      const profileOf = (state: Keybindings.KeybindingsConfigState) =>
+        state.keybindingProfiles.find(({ id }) => id === state.activeKeybindingProfile);
+
+      const upserted = yield* keybindings.upsertKeybindingRule({
+        key: "mod+g",
+        command: "terminal.toggle",
+      });
+      assert.deepInclude(profileOf(upserted), {
+        id: "my-default-copy",
+        name: "Default copy",
+        builtIn: false,
+        extends: "default",
+      });
+
+      yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      const removed = yield* keybindings.removeKeybindingRule({
+        key: "mod+j",
+        command: "terminal.toggle",
+      });
+      assert.deepInclude(profileOf(removed), { id: "my-default-copy-2", name: "Default copy 2" });
+
+      // Edits that leave nothing to keep create no copy.
+      yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      const reset = yield* keybindings.upsertKeybindingRule({
+        key: "mod+j",
+        command: "terminal.toggle",
+        replace: { key: "mod+j", command: "terminal.toggle" },
+      });
+      assert.equal(reset.activeKeybindingProfile, "default");
+      const missing = yield* keybindings.removeKeybindingRule({
+        key: "mod+alt+q",
+        command: "terminal.toggle",
+      });
+      assert.equal(missing.activeKeybindingProfile, "default");
+
+      yield* keybindings.upsertKeybindingRule({ key: "mod+shift+g", command: "terminal.toggle" });
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.deepEqual(Object.keys(file.profiles), [
+        "my-default-copy",
+        "my-default-copy-2",
+        "my-default-copy-3",
+      ]);
+      assert.deepEqual(
+        file.profiles["my-default-copy-3"].keybindings.map((rule: KeybindingRule) => rule.key),
+        ["mod+j", "mod+shift+g"],
+      );
+
+      const builtIn = yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      assert.deepEqual(builtIn.keybindings, SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("edits custom profiles against what they inherit", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+      const sidebarKeys = (state: Keybindings.KeybindingsConfigState) =>
+        commandRules(state.keybindings, "sidebar.toggle").map(
+          (rule) => "shortcut" in rule && rule.shortcut.key,
+        );
+      const detail = (mutation: Parameters<typeof keybindings.mutateProfile>[0]) =>
+        toDetailResult(keybindings.mutateProfile(mutation));
+
+      const created = yield* keybindings.mutateProfile({
+        type: "create",
+        id: "my-keys",
+        name: "My Keys!",
+        extends: "default",
+      });
+      assert.equal(created.activeKeybindingProfile, "my-keys");
+      assert.deepEqual(
+        created.keybindingProfiles.map(({ id, builtIn }) => [id, builtIn]),
+        [
+          ["default", true],
+          ["my-keys", false],
+        ],
+      );
+      const edited = yield* keybindings.upsertKeybindingRule({
+        key: "ctrl+alt+b",
+        command: "sidebar.toggle",
+        replace: { key: "mod+b", command: "sidebar.toggle" },
+        profile: { profileId: "my-keys" },
+      });
+      assert.deepEqual(sidebarKeys(edited), ["b"]);
+
+      const child = { type: "create", id: "my-keys-2", extends: "my-keys" } as const;
+      assertFailure(
+        yield* detail({ ...child, name: "My Keys!" }),
+        'a profile named "My Keys!" already exists',
+      );
+      assertFailure(
+        yield* detail({ ...child, id: "my-keys", name: "Other" }),
+        'a profile with the id "my-keys" already exists',
+      );
+      yield* keybindings.mutateProfile({ ...child, name: "My Keys! 2" });
+      yield* keybindings.upsertKeybindingRule({ key: "mod+shift+b", command: "sidebar.toggle" });
+      // Back to what my-keys binds, so my-keys-2 no longer holds the command.
+      yield* keybindings.removeKeybindingRule({ key: "mod+shift+b", command: "sidebar.toggle" });
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.deepEqual(file.profiles, {
+        "my-keys": {
+          name: "My Keys!",
+          extends: "default",
+          keybindings: [{ key: "ctrl+alt+b", command: "sidebar.toggle" }],
+        },
+        "my-keys-2": { name: "My Keys! 2", extends: "my-keys", keybindings: [] },
+      });
+
+      const switched = yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      assert.deepEqual(
+        commandRules(switched.keybindings, "sidebar.toggle"),
+        commandRules(SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS, "sidebar.toggle"),
+      );
+
+      yield* keybindings.mutateProfile({ type: "select", profileId: "my-keys-2" });
+      assertFailure(
+        yield* detail({ type: "rename", profileId: "my-keys-2", name: "Default" }),
+        'a profile named "Default" already exists',
+      );
+      const renamed = yield* keybindings.mutateProfile({
+        type: "rename",
+        profileId: "my-keys-2",
+        name: "Mine",
+      });
+      assert.equal(
+        renamed.keybindingProfiles.find((profile) => profile.id === "my-keys-2")?.name,
+        "Mine",
+      );
+      const deleted = yield* keybindings.mutateProfile({ type: "delete", profileId: "my-keys-2" });
+      assert.equal(deleted.activeKeybindingProfile, "my-keys");
+      assert.deepEqual(
+        deleted.keybindingProfiles.map(({ id }) => id),
+        ["default", "my-keys"],
+      );
+
+      let parent = "my-keys";
+      for (let depth = 3; depth <= 8; ++depth) {
+        const id = `my-depth-${depth}`;
+        yield* keybindings.mutateProfile({ type: "create", id, name: id, extends: parent });
+        parent = id;
+      }
+      assertFailure(
+        yield* detail({ type: "create", id: "my-depth-9", name: "Deep", extends: parent }),
+        'profile "my-depth-9" extends too many profiles',
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("applies an edit only to the profile it was made under", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+      const edit = { key: "mod+g", command: "terminal.toggle" } as const;
+      const copy = { profileId: "my-copy", copyOf: { extends: "default", name: "Standardkopie" } };
+
+      // An edit that changes nothing creates no copy.
+      const reset = yield* keybindings.upsertKeybindingRule({
+        key: "mod+j",
+        command: "terminal.toggle",
+        replace: { key: "mod+j", command: "terminal.toggle" },
+        profile: copy,
+      });
+      assert.equal(reset.activeKeybindingProfile, "default");
+
+      const created = yield* keybindings.upsertKeybindingRule({ ...edit, profile: copy });
+      assert.deepInclude(
+        created.keybindingProfiles.find(({ id }) => id === created.activeKeybindingProfile),
+        { id: "my-copy", name: "Standardkopie", extends: "default" },
+      );
+      // Sent again, as when the client fans out to a machine that already applied it.
+      yield* keybindings.upsertKeybindingRule({ ...edit, profile: { profileId: "my-copy" } });
+
+      assertFailure(
+        yield* toDetailResult(
+          keybindings.upsertKeybindingRule({ ...edit, profile: { profileId: "my-other" } }),
+        ),
+        'profile "my-copy" is active here, not "my-other"',
+      );
+      yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      assertFailure(
+        yield* toDetailResult(
+          keybindings.removeKeybindingRule({
+            ...edit,
+            profile: { profileId: "my-copy-2", copyOf: { extends: "emacs", name: "Emacs copy" } },
+          }),
+        ),
+        'profile "default" is active here, not "emacs"',
+      );
+      assertFailure(
+        yield* toDetailResult(keybindings.upsertKeybindingRule({ ...edit, profile: copy })),
+        'a profile with the id "my-copy" already exists',
+      );
+      assert.deepEqual(
+        (yield* readKeybindingsFile(keybindingsConfigPath)).profiles["my-copy"].keybindings,
+        [
+          { key: "mod+j", command: "terminal.toggle" },
+          { key: "mod+g", command: "terminal.toggle" },
+        ],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("edits a hand-written profile that extends a built-in", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        JSON.stringify({
+          profile: "hugo",
+          profiles: {
+            hugo: {
+              name: "Hugo",
+              extends: "default",
+              keybindings: [{ key: "ctrl+alt+b", command: "sidebar.toggle" }],
+            },
+          },
+        }),
+      );
+      const parent = yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      yield* keybindings.mutateProfile({ type: "select", profileId: "hugo" });
+
+      const edited = yield* keybindings.upsertKeybindingRule({
+        key: "mod+g",
+        command: "terminal.toggle",
+        profile: { profileId: "hugo" },
+      });
+      assert.equal(edited.activeKeybindingProfile, "hugo");
+      assert.deepEqual(
+        commandRules(edited.keybindings, "chat.new"),
+        commandRules(parent.keybindings, "chat.new"),
+      );
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.deepEqual(Object.keys(file.profiles), ["hugo"]);
+      assert.deepEqual(
+        file.profiles.hugo.keybindings.map((rule: KeybindingRule) => rule.command),
+        [
+          "sidebar.toggle",
+          ...commandRules(parent.keybindings, "terminal.toggle").map(() => "terminal.toggle"),
+          "terminal.toggle",
+        ],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("moves top-level rules into a profile extending the active one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        JSON.stringify({
+          profile: "custom",
+          profiles: {
+            custom: {
+              name: "Custom",
+              keybindings: [{ key: "ctrl+b", command: "sidebar.toggle" }],
+            },
+          },
+          keybindings: [
+            { key: "ctrl+b", command: "sidebar.toggle" },
+            { key: "mod+g", command: "terminal.toggle" },
+          ],
+        }),
+      );
+
+      yield* keybindings.migrateConfigOnStartup;
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.notProperty(file, "keybindings");
+      assert.equal(file.profile, "my-custom-2");
+      assert.deepEqual(file.profiles["my-custom-2"], {
+        name: "Custom 2",
+        extends: "custom",
+        keybindings: [{ key: "mod+g", command: "terminal.toggle" }],
+      });
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("guards profile changes and falls back when the active profile cannot resolve", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        JSON.stringify({
+          profile: "a",
+          profiles: [
+            { id: "a", name: "A", extends: "b", keybindings: [] },
+            { id: "b", name: "B", extends: "a", keybindings: [] },
+            {
+              id: "default",
+              name: "Hijack",
+              keybindings: [{ key: "x", command: "sidebar.toggle" }],
+            },
+            { id: "c", name: "C", extends: "default", keybindings: [] },
+            { id: "d", name: "D", extends: "c", keybindings: [] },
+          ],
+          keybindings: [],
+          futureKey: { kept: true },
+        }),
+      );
+
+      const state = yield* keybindings.loadConfigState;
+      assert.equal(state.activeKeybindingProfile, "default");
+      assert.deepEqual(state.keybindings, SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS);
+      assert.deepEqual(
+        state.issues.map((issue) => issue.kind),
+        ["keybindings.invalid-entry", "keybindings.malformed-config"],
+      );
+
+      const detail = (mutation: Parameters<typeof keybindings.mutateProfile>[0]) =>
+        toDetailResult(keybindings.mutateProfile(mutation));
+      assertFailure(
+        yield* detail({ type: "select", profileId: "a" }),
+        'profile "a" extends itself through "a"',
+      );
+      assertFailure(
+        yield* detail({ type: "select", profileId: "missing" }),
+        'unknown keybinding profile "missing"',
+      );
+      assertFailure(
+        yield* detail({ type: "rename", profileId: "default", name: "X" }),
+        '"default" is a built-in profile',
+      );
+      assertFailure(yield* detail({ type: "delete", profileId: "c" }), 'profile "d" extends "c"');
+
+      const edit = { key: "mod+g", command: "terminal.toggle" } as const;
+      const refusal = 'profile "a" extends itself through "a"; select another profile to edit';
+      assertFailure(yield* toDetailResult(keybindings.upsertKeybindingRule(edit)), refusal);
+      assertFailure(yield* toDetailResult(keybindings.removeKeybindingRule(edit)), refusal);
+      assert.equal((yield* readKeybindingsFile(keybindingsConfigPath)).profile, "a");
+
+      yield* keybindings.mutateProfile({ type: "select", profileId: "d" });
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.equal(file.profile, "d");
+      assert.deepEqual(file.futureKey, { kept: true });
+      // Read from the array form of early builds, and written back keyed by id.
+      assert.deepEqual(Object.keys(file.profiles), ["a", "b", "default", "c", "d"]);
+    }).pipe(Effect.provide(layerKeybindings())),
   );
 });

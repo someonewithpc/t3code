@@ -125,11 +125,7 @@ export function applyServerConfigProjection(
     }
     case "keybindingsUpdated":
       return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          keybindings: event.payload.keybindings,
-          issues: event.payload.issues,
-        },
+        config: { ...projection.config, ...event.payload },
         latestEvent: event,
         source: "live",
       }));

@@ -943,6 +943,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/keybindings",
     searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
   },
+  {
+    id: "keybinding-profile",
+    title: "Keybinding profile",
+    to: "/settings/keybindings",
+    searchTerms: ["keymap layout preset duplicate rename delete custom profile"],
+  },
   ...KEYBINDING_SEARCH_ITEMS,
   {
     id: "snap-shot-enabled",

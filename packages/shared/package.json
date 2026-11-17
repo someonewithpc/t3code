@@ -259,6 +259,10 @@
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
     },
+    "./keybindingProfiles": {
+      "types": "./src/keybindingProfiles.ts",
+      "import": "./src/keybindingProfiles.ts"
+    },
     "./keybindingMatching": {
       "types": "./src/keybindingMatching.ts",
       "import": "./src/keybindingMatching.ts"

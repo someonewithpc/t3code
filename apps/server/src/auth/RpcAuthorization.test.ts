@@ -566,36 +566,47 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   }),
 );
 
-it.effect("denies manual cleanup before the handler without settings permission", () =>
+it.effect("denies cleanup and profile changes before the handler without settings permission", () =>
   Effect.gen(function* () {
+    const allowed = new Set<string>([
+      WS_METHODS.serverRunStorageCleanup,
+      WS_METHODS.serverMutateKeybindingProfile,
+    ]);
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (
           tag,
         ): tag is Exclude<
           keyof typeof RPC_REQUIRED_SCOPES,
-          typeof WS_METHODS.serverRunStorageCleanup
-        > => tag !== WS_METHODS.serverRunStorageCleanup,
+          | typeof WS_METHODS.serverRunStorageCleanup
+          | typeof WS_METHODS.serverMutateKeybindingProfile
+        > => !allowed.has(tag),
       ),
     );
-    let handled = false;
+    let handled = 0;
     const client = yield* RpcTest.makeClient(group).pipe(
       Effect.provide(
         Layer.mergeAll(
-          group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
-            Effect.sync(() => {
-              handled = true;
-              return {
-                trigger: "manual" as const,
-                startedAt: "2026-10-09T12:00:00.000Z",
-                finishedAt: "2026-10-09T12:00:00.000Z",
-                entries: [],
-                counts: { removed: 0, kept: 0, failed: 0 },
-                omittedCount: 0,
-                bytesFreed: 0,
-              };
-            }),
-          ),
+          group.toLayer({
+            [WS_METHODS.serverRunStorageCleanup]: () =>
+              Effect.sync(() => {
+                handled += 1;
+                return {
+                  trigger: "manual" as const,
+                  startedAt: "2026-10-09T12:00:00.000Z",
+                  finishedAt: "2026-10-09T12:00:00.000Z",
+                  entries: [],
+                  counts: { removed: 0, kept: 0, failed: 0 },
+                  omittedCount: 0,
+                  bytesFreed: 0,
+                };
+              }),
+            [WS_METHODS.serverMutateKeybindingProfile]: () =>
+              Effect.sync(() => {
+                handled += 1;
+                return { keybindings: [], issues: [] };
+              }),
+          }),
           RpcAuthorization.layer([AuthOrchestrationReadScope]),
         ),
       ),
@@ -603,6 +614,12 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
       requiredPermission: AuthSettingsWriteScope,
     });
-    expect(handled).toBe(false);
+    expect(
+      yield* client[WS_METHODS.serverMutateKeybindingProfile]({
+        type: "select",
+        profileId: "default",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+    expect(handled).toBe(0);
   }),
 );

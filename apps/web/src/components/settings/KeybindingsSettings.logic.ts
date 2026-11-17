@@ -141,14 +141,17 @@ export function parseWhenExpressionDraft(
   return { ok: true, value: ast };
 }
 
-function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
+function sourceForBinding(
+  binding: ResolvedKeybindingRule,
+  defaults: ResolvedKeybindingsConfig,
+): KeybindingSource {
   if (String(binding.command).startsWith("script.")) {
     return "Project";
   }
 
   const bindingKey = keybindingInputForBinding(binding);
   const bindingWhen = whenAstToExpression(binding.whenAst);
-  const isDefault = DEFAULT_RESOLVED_KEYBINDINGS.some(
+  const isDefault = defaults.some(
     (entry) =>
       entry.command === binding.command &&
       keybindingInputForBinding(entry) === bindingKey &&
@@ -160,28 +163,29 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
 
 function defaultBindingForBinding(
   binding: ResolvedKeybindingRule,
+  defaults: ResolvedKeybindingsConfig,
 ): ResolvedKeybindingRule | undefined {
   const bindingKey = keybindingInputForBinding(binding);
   const bindingWhen = whenAstToExpression(binding.whenAst);
 
   return (
-    DEFAULT_RESOLVED_KEYBINDINGS.find(
+    defaults.find(
       (entry) =>
         entry.command === binding.command &&
         keybindingInputForBinding(entry) === bindingKey &&
         whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
     (bindingWhen === "false"
-      ? DEFAULT_RESOLVED_KEYBINDINGS.find(
+      ? defaults.find(
           (entry) =>
             entry.command === binding.command && keybindingInputForBinding(entry) === bindingKey,
         )
       : undefined) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find(
+    defaults.find(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => entry.command === binding.command)
+    defaults.find((entry) => entry.command === binding.command)
   );
 }
 
@@ -268,13 +272,15 @@ export function groupKeybindingRows(
   });
 }
 
+/** `defaults` are the active profile's built-in rules, which Reset to default restores. */
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
+  defaults: ResolvedKeybindingsConfig = DEFAULT_RESOLVED_KEYBINDINGS,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
   for (const binding of keybindings) {
-    const defaultBinding = defaultBindingForBinding(binding);
+    const defaultBinding = defaultBindingForBinding(binding, defaults);
     const key = keybindingInputForBinding(binding);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
@@ -283,7 +289,7 @@ export function buildKeybindingRows(
       command: binding.command,
       key,
       when,
-      source: sourceForBinding(binding),
+      source: sourceForBinding(binding, defaults),
       isUnassigned:
         when === "false" &&
         defaultBinding !== undefined &&

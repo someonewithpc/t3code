@@ -1672,6 +1672,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    mutateKeybindingProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:mutate-keybinding-profile",
+      tag: WS_METHODS.serverMutateKeybindingProfile,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     updateSettings,
     mutateProviderInstance: updateSettings,
     prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {

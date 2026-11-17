@@ -30,10 +30,12 @@ import {
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import {
+  compileResolvedKeybindingsConfig,
   keybindingRuleSteps,
   mergeWithDefaultKeybindings,
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
+import { keybindingProfileDefaults } from "@t3tools/shared/keybindingProfiles";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -82,6 +84,12 @@ import {
   type KeybindingStepCapture,
   KeybindingStepsEditor,
 } from "./KeybindingStepsEditor";
+import {
+  KeybindingProfileSection,
+  useKeybindingEditTarget,
+  useKeybindingProfileCopyNotice,
+  useKeybindingResetLabel,
+} from "./KeybindingProfileSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
@@ -807,6 +815,7 @@ interface KeybindingRowActions {
   onReset: (row: KeybindingRow) => void;
   onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
+  resetLabel: string;
 }
 
 type KeybindingRowProps = KeybindingRowActions & {
@@ -952,12 +961,14 @@ function WhenClauseControl({
 function KeybindingRowMenu({
   row,
   isSaving,
+  resetLabel,
   onReset,
   onUnassign,
   onRemove,
 }: {
   row: KeybindingRow;
   isSaving: boolean;
+  resetLabel: string;
   onReset: (row: KeybindingRow) => void;
   onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
@@ -985,7 +996,7 @@ function KeybindingRowMenu({
       <MenuPopup align="end">
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
-            Reset to default
+            {resetLabel}
           </MenuItem>
         ) : null}
         {canUnassign ? (
@@ -1051,6 +1062,7 @@ function KeybindingRowWhen({
 function KeybindingHoverRowMenu(props: {
   row: KeybindingRow;
   isSaving: boolean;
+  resetLabel: string;
   onReset: (row: KeybindingRow) => void;
   onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
@@ -1085,6 +1097,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
           <KeybindingHoverRowMenu
             row={row}
             isSaving={isSaving}
+            resetLabel={props.resetLabel}
             onReset={onReset}
             onUnassign={onUnassign}
             onRemove={onRemove}
@@ -1368,11 +1381,17 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
-  const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
-  const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  const serverConfig = useSettingsScope().environment?.serverConfig;
+  const merged = mergeWithDefaultKeybindings(serverConfig?.keybindings ?? []);
+  const defaults = compileResolvedKeybindingsConfig(
+    keybindingProfileDefaults(
+      serverConfig?.activeKeybindingProfile,
+      serverConfig?.keybindingProfiles,
+    ),
+  );
   return {
     commandOptions: buildKeybindingCommandOptions(merged),
-    allRows: buildKeybindingRows(merged),
+    allRows: buildKeybindingRows(merged, navigator.platform, defaults),
   };
 }
 
@@ -1394,6 +1413,24 @@ export function KeybindingsSettingsPanel() {
   const removeKeybindingMutation = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
+  const notifyProfileCopy = useKeybindingProfileCopyNotice();
+  const editTargetFor = useKeybindingEditTarget();
+  const resetLabel = useKeybindingResetLabel(primaryEnvironment?.serverConfig);
+  // Servers from before profiles have none, take no profile changes and get plain rule edits.
+  const profileTargets = connectedEnvironments.filter(
+    (target) => target.serverConfig?.keybindingProfiles !== undefined,
+  );
+  const everyProfile = profileTargets.flatMap(
+    (target) => target.serverConfig?.keybindingProfiles ?? [],
+  );
+  const withEditTarget = <Input extends object>(
+    target: (typeof connectedEnvironments)[number],
+    input: Input,
+    profile: ReturnType<typeof editTargetFor>,
+  ) =>
+    profile && target.serverConfig?.keybindingProfiles !== undefined
+      ? { ...input, profile }
+      : input;
   const openInPreferredEditor = useOpenInPreferredEditor(
     primaryEnvironment?.environmentId ?? null,
     availableEditors,
@@ -1437,6 +1474,17 @@ export function KeybindingsSettingsPanel() {
     })();
   };
 
+  const notifyPrimaryProfileCopy = (
+    before: Parameters<typeof notifyProfileCopy>[0],
+    results: ReadonlyArray<Awaited<ReturnType<typeof upsertKeybinding>>>,
+  ) => {
+    const index = connectedEnvironments.findIndex(
+      (target) => target.environmentId === primaryEnvironment?.environmentId,
+    );
+    const result = results[index];
+    if (result?._tag === "Success") notifyProfileCopy(before, result.value);
+  };
+
   const saveKeybinding = (input: ServerUpsertKeybindingInput) => {
     if (
       !primaryEnvironment ||
@@ -1452,13 +1500,19 @@ export function KeybindingsSettingsPanel() {
       ...(input.when?.trim() ? { when: input.when.trim() } : {}),
       ...(input.replace ? { replace: input.replace } : {}),
     };
+    const before = primaryEnvironment.serverConfig;
+    const profile = editTargetFor(before, everyProfile);
     void (async () => {
       const results = await Promise.all(
         connectedEnvironments.map((target) =>
-          upsertKeybinding({ environmentId: target.environmentId, input: payload }),
+          upsertKeybinding({
+            environmentId: target.environmentId,
+            input: withEditTarget(target, payload, profile),
+          }),
         ),
       );
       setSavingCommand(null);
+      notifyPrimaryProfileCopy(before, results);
       const failed = results.find((result) => result._tag === "Failure");
       if (!failed) {
         setIsAddingBinding(false);
@@ -1484,16 +1538,19 @@ export function KeybindingsSettingsPanel() {
     )
       return;
     setSavingCommand(row.command);
+    const before = primaryEnvironment.serverConfig;
+    const profile = editTargetFor(before, everyProfile);
     void (async () => {
       const results = await Promise.all(
         connectedEnvironments.map((target) =>
           removeKeybindingMutation({
             environmentId: target.environmentId,
-            input: rowKeybindingTarget(row),
+            input: withEditTarget(target, rowKeybindingTarget(row), profile),
           }),
         ),
       );
       setSavingCommand(null);
+      notifyPrimaryProfileCopy(before, results);
       const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
       if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -1539,10 +1596,23 @@ export function KeybindingsSettingsPanel() {
     onReset: resetKeybinding,
     onUnassign: unassignKeybinding,
     onRemove: removeKeybinding,
+    resetLabel,
   };
+
+  const keybindingProfiles = primaryEnvironment?.serverConfig?.keybindingProfiles;
+  const activeKeybindingProfile = primaryEnvironment?.serverConfig?.activeKeybindingProfile;
 
   return (
     <SettingsPageContainer>
+      {primaryEnvironment && keybindingProfiles && activeKeybindingProfile ? (
+        <KeybindingProfileSection
+          environmentId={primaryEnvironment.environmentId}
+          targets={profileTargets.map((target) => target.environmentId)}
+          everyProfile={everyProfile}
+          profiles={keybindingProfiles}
+          activeProfileId={activeKeybindingProfile}
+        />
+      ) : null}
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={!isElectron ? <BrowserKeybindingNotice /> : null}

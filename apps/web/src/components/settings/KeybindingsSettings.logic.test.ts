@@ -64,6 +64,34 @@ describe("KeybindingsSettings.logic", () => {
     );
   });
 
+  it("labels and resets rows against the active profile's defaults", () => {
+    const defaults = compileResolvedKeybindingsConfig([
+      { command: "sidebar.toggle", key: "ctrl+b" },
+      { command: "terminal.toggle", key: "ctrl+j" },
+    ]);
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "sidebar.toggle", key: "ctrl+b" },
+        { command: "terminal.toggle", key: "mod+j" },
+        { command: "terminal.toggle", key: "ctrl+j", when: "false" },
+      ]),
+      "Linux x86_64",
+      defaults,
+    );
+    expect(
+      rows.map(({ key, source, defaultKey, isUnassigned }) => ({
+        key,
+        source,
+        defaultKey,
+        isUnassigned,
+      })),
+    ).toEqual([
+      { key: "ctrl+b", source: "Default", defaultKey: "ctrl+b", isUnassigned: false },
+      { key: "ctrl+j", source: "Custom", defaultKey: "ctrl+j", isUnassigned: true },
+      { key: "mod+j", source: "Custom", defaultKey: "ctrl+j", isUnassigned: false },
+    ]);
+  });
+
   it("captures platform-specific mod shortcuts", () => {
     expect(
       keybindingFromKeyboardEvent(

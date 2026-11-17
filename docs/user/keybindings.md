@@ -4,7 +4,8 @@ Customize shortcuts in **Settings → Keybindings** on web and desktop. That pag
 also lists the command IDs and defaults available in your version.
 
 To free a default shortcut for another command, choose **Unassign** from its row's
-actions menu. **Reset to default** brings it back.
+actions menu. **Reset to default** brings it back. To keep several sets of
+shortcuts, see [Profiles](#profiles).
 
 ## Composer controls
 
@@ -93,23 +94,75 @@ Keyboard; `Cmd+Return` then sends.
 With a hardware keyboard, the composer handles Return as on iPad, with `Ctrl` in
 place of `Cmd`. The on-screen keyboard's Return always inserts a new line.
 
+## Profiles
+
+A profile is a named set of shortcuts. T3 Code ships the **Default** profile.
+Pick a profile from the profile menu in **Settings → Keybindings**. One profile
+is active at a time, and only its shortcuts apply.
+
+Built-in profiles don't change. When you change a shortcut while one is
+selected, T3 Code creates a copy of it, such as "Default copy", switches to the
+copy and saves the change there. Later changes stay in that copy. Selecting the
+built-in again and changing a shortcut makes another copy. A change that leaves
+the shortcuts as they were makes none.
+
+**Duplicate** makes a profile that starts from the active one under a name you
+choose, and switches to it. It keeps following the original: shortcuts you
+haven't changed in it change when the original does. **Rename** and **Delete**
+work on profiles you made. Deleting the active profile switches to the one it
+extends. A profile that another profile extends can't be deleted until that one
+is gone.
+
+When the scope picker covers several machines, profile changes and shortcut
+changes go to each of them, so they keep the same profiles. A machine where the
+change doesn't fit, for example because another profile is active there,
+reports an error and keeps its shortcuts.
+
 ## Edit the configuration file
 
 Keybindings live on the environment's machine, in
-`~/.t3/userdata/keybindings.json` by default. You can edit this file directly.
-It is a JSON array of rules:
+`~/.t3/userdata/keybindings.json` by default. You can edit this file directly:
 
 ```json
-[
-  { "key": "mod+g", "command": "terminal.toggle" },
-  { "key": "mod+shift+g", "command": "terminal.new", "when": "terminalFocus" }
-]
+{
+  "profile": "hugo",
+  "profiles": {
+    "hugo": {
+      "name": "Hugo",
+      "extends": "default",
+      "keybindings": [
+        { "key": "ctrl+alt+b", "command": "sidebar.toggle" },
+        { "key": "mod+shift+g", "command": "terminal.new", "when": "terminalFocus" }
+      ]
+    }
+  }
+}
 ```
 
-T3 Code creates the file with its defaults and adds new defaults on later startups.
-New defaults do not replace commands you customized. If a new default overlaps one
-of your shortcuts, [rule order](#precedence) decides which runs.
-Invalid rules are ignored; if the file cannot be parsed, T3 Code uses defaults.
+`profile` names the active profile. `profiles` holds the profiles you made,
+keyed by id, so a JSON merge can add one without touching the others. An id uses
+lowercase letters, digits and dashes. Profiles T3 Code creates get ids starting
+with `my-`, which no built-in profile uses. `extends` names the profile each one
+starts from, `default` if you leave it out.
+
+The file holds only your changes. The defaults come from the profile, so new
+defaults in later versions reach you without edits. A profile's rules for a
+command replace every rule its parent has for that command. To keep a default
+shortcut next to a new one, list both. To turn a default off, give it
+`"when": "false"`, which is what **Unassign** writes.
+
+Older versions wrote a JSON array of rules that included every default. The
+first start after upgrading saves that file as `keybindings.json.pre-profiles`
+and converts it. Commands whose rules match the defaults of this or an earlier
+version are dropped. The rest, unassigned shortcuts included, go into a new
+profile named Custom that extends Default and becomes active. If nothing is
+left, Default stays active.
+
+Invalid rules are ignored, and T3 Code keeps them in the file when it saves, so
+rules for commands from a newer version survive. If the file cannot be parsed,
+T3 Code uses the defaults and does not overwrite the file. Versions from before
+profiles cannot read the new format and fall back to their defaults. To go back
+to one, restore `keybindings.json.pre-profiles`.
 
 ## Rule shape
 
@@ -189,8 +242,9 @@ Streamed browser tabs and T3 Code in a web browser do not support it.
 ## Precedence
 
 The last rule whose key and condition both match wins, even if it belongs to a
-different command. Put a more specific rule after a general one when they share
-a shortcut. A key that starts an active sequence wins over a single-key rule on
+different command. Your own rules come after the profile's, so they win a
+shortcut they share with it. Put a more specific rule after a general one when
+they share a shortcut. A key that starts an active sequence wins over a single-key rule on
 the same key, whatever their order.
 
 ## Commands with special behavior

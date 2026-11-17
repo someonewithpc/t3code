@@ -247,3 +247,69 @@ export class KeybindingsConfigError extends Schema.TaggedError<KeybindingsConfig
     return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
   }
 }
+
+export const MAX_KEYBINDING_PROFILE_ID_LENGTH = 32;
+export const MAX_KEYBINDING_PROFILES_COUNT = 32;
+export const DEFAULT_KEYBINDING_PROFILE_ID = "default";
+
+export const KeybindingProfileId = TrimmedString.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_KEYBINDING_PROFILE_ID_LENGTH),
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+);
+export type KeybindingProfileId = typeof KeybindingProfileId.Type;
+
+export const MAX_KEYBINDING_PROFILE_NAME_LENGTH = 64;
+
+export const KeybindingProfileName = TrimmedString.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_KEYBINDING_PROFILE_NAME_LENGTH),
+);
+
+/** `extends` is null for a profile that starts from no shortcuts at all. */
+export const KeybindingProfileSummary = Schema.Struct({
+  id: KeybindingProfileId,
+  name: KeybindingProfileName,
+  builtIn: Schema.Boolean,
+  extends: Schema.NullOr(KeybindingProfileId),
+  // A custom profile's own rules, so clients can resolve what each profile inherits.
+  keybindings: Schema.optional(
+    ForwardCompatibleArray(KeybindingRule).check(Schema.isMaxLength(MAX_KEYBINDINGS_COUNT)),
+  ),
+});
+export type KeybindingProfileSummary = typeof KeybindingProfileSummary.Type;
+
+export const KeybindingProfileSummaries = ForwardCompatibleArray(KeybindingProfileSummary).check(
+  Schema.isMaxLength(MAX_KEYBINDING_PROFILES_COUNT * 2),
+);
+
+export const KeybindingProfileMutation = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("select"), profileId: KeybindingProfileId }),
+  // The new profile extends `extends` and becomes active. Clients pick the id, so every
+  // environment a change fans out to gets the same one.
+  Schema.Struct({
+    type: Schema.Literal("create"),
+    id: KeybindingProfileId,
+    name: KeybindingProfileName,
+    extends: KeybindingProfileId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("rename"),
+    profileId: KeybindingProfileId,
+    name: KeybindingProfileName,
+  }),
+  Schema.Struct({ type: Schema.Literal("delete"), profileId: KeybindingProfileId }),
+]);
+export type KeybindingProfileMutation = typeof KeybindingProfileMutation.Type;
+
+/**
+ * The profile an edit from Settings is for. `copyOf` is set when the edit was made under a
+ * built-in: the server then creates `profileId` as that copy, unless the edit changes nothing.
+ */
+export const KeybindingEditTarget = Schema.Struct({
+  profileId: KeybindingProfileId,
+  copyOf: Schema.optional(
+    Schema.Struct({ extends: KeybindingProfileId, name: KeybindingProfileName }),
+  ),
+});
+export type KeybindingEditTarget = typeof KeybindingEditTarget.Type;

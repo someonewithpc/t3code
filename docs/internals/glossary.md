@@ -64,3 +64,9 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Attachment inventory | The ordered image records shown as thumbnails above the prose, including images with no inline references.                          |
 
 See [composer context references](./composer-context-references.md) for the contract and lifecycle.
+
+## Keybindings
+
+| Term               | Meaning                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keybinding profile | A named rule set in `keybindings.json`, or a read-only built-in from [`keybindingProfiles.ts`](../../packages/shared/src/keybindingProfiles.ts). A profile's rules for a command replace everything its parent has for that command, so the first edit to a command copies its rules. The server resolves the active one, so clients receive flat rules. |

@@ -161,7 +161,7 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
-import { KeybindingsConfigError } from "./keybindings.ts";
+import { KeybindingProfileMutation, KeybindingsConfigError } from "./keybindings.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -349,6 +349,7 @@ import {
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
+  ServerMutateKeybindingProfileResult,
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
@@ -539,6 +540,7 @@ export const WS_METHODS = {
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  serverMutateKeybindingProfile: "server.mutateKeybindingProfile",
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
@@ -679,6 +681,12 @@ const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, 
 const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, {
   payload: ServerRemoveKeybindingInput,
   success: ServerRemoveKeybindingResult,
+  error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
+});
+
+const WsServerMutateKeybindingProfileRpc = Rpc.make(WS_METHODS.serverMutateKeybindingProfile, {
+  payload: KeybindingProfileMutation,
+  success: ServerMutateKeybindingProfileResult,
   error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
 });
 
@@ -2285,6 +2293,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerCommitDesktopUpdateRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
+  WsServerMutateKeybindingProfileRpc,
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
