@@ -7,6 +7,7 @@ import {
   MAX_KEYBINDING_PROFILE_NAME_LENGTH,
 } from "@t3tools/contracts";
 
+import { EMACS_KEYBINDINGS } from "./emacsKeybindings.ts";
 import { DEFAULT_KEYBINDINGS } from "./keybindings.ts";
 
 export interface KeybindingProfileDefinition {
@@ -25,6 +26,12 @@ const BUILT_IN_KEYBINDING_PROFILES: ReadonlyArray<KeybindingProfileDefinition> =
     name: "Default",
     extends: null,
     keybindings: DEFAULT_KEYBINDINGS,
+  },
+  {
+    id: "emacs",
+    name: "Emacs",
+    extends: DEFAULT_KEYBINDING_PROFILE_ID,
+    keybindings: EMACS_KEYBINDINGS,
   },
 ];
 

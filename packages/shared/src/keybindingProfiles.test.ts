@@ -88,3 +88,30 @@ describe("keybindingEditTarget", () => {
     });
   });
 });
+
+describe("the Emacs profile", () => {
+  const resolved = resolveKeybindingProfileRules("emacs", []);
+  if (!resolved.ok) throw new Error(resolved.reason);
+
+  it("leaves single Ctrl and Alt letter keys to text editing on Linux", () => {
+    const emacsKey = /^(?:mod|ctrl|alt)\+(?:[a-z]|space|\/|\[|\]|`)$/;
+    const searchCommands = new Set(["chat.findNext", "chat.findPrevious", "preview.find"]);
+    const offenders = resolved.rules.filter(
+      (rule) =>
+        emacsKey.test(rule.key) &&
+        !rule.command.startsWith("text.") &&
+        !(/^ctrl\+[rs]$/.test(rule.key) && searchCommands.has(rule.command)) &&
+        !(rule.key === "ctrl+`" && rule.command === "terminal.toggle") &&
+        !(rule.key === "alt+x" && rule.command === "commandPalette.toggle"),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps the app commands it moves reachable", () => {
+    const keysFor = (command: string) =>
+      resolved.rules.filter((rule) => rule.command === command).map((rule) => rule.key);
+    expect(keysFor("commandPalette.toggle")).toEqual(["alt+x", "meta+k"]);
+    expect(keysFor("filePicker.toggle")).toEqual(["ctrl+x ctrl+f", "meta+p"]);
+    expect(keysFor("terminal.toggle")).toEqual(["ctrl+c t", "ctrl+`", "meta+j"]);
+  });
+});

@@ -937,6 +937,33 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("puts edits made under Emacs in an Emacs copy", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+      const emacs = yield* keybindings.mutateProfile({ type: "select", profileId: "emacs" });
+
+      const edited = yield* keybindings.upsertKeybindingRule({
+        key: "mod+g",
+        command: "terminal.toggle",
+      });
+      assert.deepInclude(
+        edited.keybindingProfiles.find(({ id }) => id === edited.activeKeybindingProfile),
+        { id: "my-emacs-copy", name: "Emacs copy", extends: "emacs" },
+      );
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.deepEqual(file.profiles["my-emacs-copy"].keybindings, [
+        { key: "ctrl+c t", command: "terminal.toggle", when: "!terminalFocus" },
+        { key: "ctrl+`", command: "terminal.toggle" },
+        { key: "meta+j", command: "terminal.toggle" },
+        { key: "mod+g", command: "terminal.toggle" },
+      ]);
+      const builtIn = yield* keybindings.mutateProfile({ type: "select", profileId: "emacs" });
+      assert.deepEqual(builtIn.keybindings, emacs.keybindings);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("keeps project script shortcuts outside profiles", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1044,6 +1071,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         created.keybindingProfiles.map(({ id, builtIn }) => [id, builtIn]),
         [
           ["default", true],
+          ["emacs", true],
           ["my-keys", false],
         ],
       );
@@ -1102,7 +1130,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(deleted.activeKeybindingProfile, "my-keys");
       assert.deepEqual(
         deleted.keybindingProfiles.map(({ id }) => id),
-        ["default", "my-keys"],
+        ["default", "emacs", "my-keys"],
       );
 
       let parent = "my-keys";
@@ -1185,13 +1213,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           profiles: {
             hugo: {
               name: "Hugo",
-              extends: "default",
+              extends: "emacs",
               keybindings: [{ key: "ctrl+alt+b", command: "sidebar.toggle" }],
             },
           },
         }),
       );
-      const parent = yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
+      const parent = yield* keybindings.mutateProfile({ type: "select", profileId: "emacs" });
       yield* keybindings.mutateProfile({ type: "select", profileId: "hugo" });
 
       const edited = yield* keybindings.upsertKeybindingRule({

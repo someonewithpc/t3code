@@ -96,12 +96,12 @@ place of `Cmd`. The on-screen keyboard's Return always inserts a new line.
 
 ## Profiles
 
-A profile is a named set of shortcuts. T3 Code ships the **Default** profile.
-Pick a profile from the profile menu in **Settings → Keybindings**. One profile
-is active at a time, and only its shortcuts apply.
+A profile is a named set of shortcuts. T3 Code ships two: **Default** and
+[**Emacs**](#emacs-profile). Pick one from the profile menu in **Settings →
+Keybindings**. One profile is active at a time, and only its shortcuts apply.
 
 Built-in profiles don't change. When you change a shortcut while one is
-selected, T3 Code creates a copy of it, such as "Default copy", switches to the
+selected, T3 Code creates a copy of it, such as "Emacs copy", switches to the
 copy and saves the change there. Later changes stay in that copy. Selecting the
 built-in again and changing a shortcut makes another copy. A change that leaves
 the shortcuts as they were makes none.
@@ -132,7 +132,7 @@ Keybindings live on the environment's machine, in
   "profiles": {
     "hugo": {
       "name": "Hugo",
-      "extends": "default",
+      "extends": "emacs",
       "keybindings": [
         { "key": "ctrl+alt+b", "command": "sidebar.toggle" },
         { "key": "mod+shift+g", "command": "terminal.new", "when": "terminalFocus" }
@@ -316,83 +316,48 @@ line in the composer or a multi-line field without sending.
 `text.cursorLineDown` and `text.cursorLineUp` act as Down and Up in a list:
 the command palette, pickers, and the composer's suggestions.
 
-To edit like Emacs, add these rules to `keybindings.json`. Some replace
-defaults while a field has focus, such as `ctrl+k` for the command palette and
-`ctrl+n` for a new thread on Windows and Linux, so rebind those commands if
-you need them from a field. `ctrl+u` cuts to the start of the line as in a
-shell, since T3 Code has no prefix arguments.
+## Emacs profile
 
-```json
-[
-  { "key": "ctrl+f", "command": "text.cursorForward", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+b", "command": "text.cursorBackward", "when": "editableFocus && !terminalFocus" },
-  {
-    "key": "alt+f",
-    "command": "text.cursorWordForward",
-    "when": "editableFocus && !terminalFocus"
-  },
-  {
-    "key": "alt+b",
-    "command": "text.cursorWordBackward",
-    "when": "editableFocus && !terminalFocus"
-  },
-  { "key": "ctrl+a", "command": "text.cursorLineStart", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+e", "command": "text.cursorLineEnd", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+n", "command": "text.cursorLineDown", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+p", "command": "text.cursorLineUp", "when": "editableFocus && !terminalFocus" },
-  {
-    "key": "alt+shift+,",
-    "command": "text.cursorDocumentStart",
-    "when": "editableFocus && !terminalFocus"
-  },
-  {
-    "key": "alt+shift+.",
-    "command": "text.cursorDocumentEnd",
-    "when": "editableFocus && !terminalFocus"
-  },
-  { "key": "ctrl+d", "command": "text.deleteForward", "when": "editableFocus && !terminalFocus" },
-  { "key": "alt+d", "command": "text.cutWordForward", "when": "editableFocus && !terminalFocus" },
-  {
-    "key": "alt+backspace",
-    "command": "text.cutWordBackward",
-    "when": "editableFocus && !terminalFocus"
-  },
-  { "key": "ctrl+k", "command": "text.cutToLineEnd", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+u", "command": "text.cutToLineStart", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+w", "command": "text.cutSelection", "when": "editableFocus && !terminalFocus" },
-  { "key": "alt+w", "command": "text.copySelection", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+y", "command": "text.paste", "when": "editableFocus && !terminalFocus" },
-  { "key": "alt+y", "command": "text.pasteOlder", "when": "editableFocus && !terminalFocus" },
-  {
-    "key": "ctrl+t",
-    "command": "text.transposeCharacters",
-    "when": "editableFocus && !terminalFocus"
-  },
-  {
-    "key": "ctrl+space",
-    "command": "text.anchorSelection",
-    "when": "editableFocus && !terminalFocus"
-  },
-  { "key": "ctrl+g", "command": "text.clearSelection", "when": "editableFocus && !terminalFocus" },
-  {
-    "key": "ctrl+x ctrl+x",
-    "command": "text.exchangePointAndMark",
-    "when": "editableFocus && !terminalFocus"
-  },
-  { "key": "ctrl+x h", "command": "text.selectAll", "when": "editableFocus && !terminalFocus" },
-  { "key": "alt+t", "command": "text.transposeWords", "when": "editableFocus && !terminalFocus" },
-  { "key": "alt+u", "command": "text.upcaseWord", "when": "editableFocus && !terminalFocus" },
-  { "key": "alt+l", "command": "text.downcaseWord", "when": "editableFocus && !terminalFocus" },
-  {
-    "key": "alt+c",
-    "command": "text.capitalizeWord",
-    "when": "editableFocus && !terminalFocus"
-  },
-  { "key": "ctrl+j", "command": "text.newline", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+/", "command": "text.undo", "when": "editableFocus && !terminalFocus" },
-  { "key": "ctrl+shift+-", "command": "text.undo", "when": "editableFocus && !terminalFocus" }
-]
-```
+Choose **Emacs** from the profile menu in **Settings → Keybindings** to edit
+text fields and the composer with Emacs keys. In this profile, no app shortcut
+sits on a basic Emacs key, so `C-a`, `C-k`, `C-n` and the rest only edit text.
+The terminal gets them too, so `C-d` ends the shell and `C-w` deletes a word.
+
+| Keys                                | In a text field                                         |
+| ----------------------------------- | ------------------------------------------------------- |
+| `C-f` `C-b` `M-f` `M-b`             | Move by character or word                               |
+| `C-a` `C-e` `C-n` `C-p` `M-<` `M->` | Move by line or to either end                           |
+| `C-d` `M-d` `M-DEL`                 | Delete a character, cut a word                          |
+| `C-k` `C-u` `C-w` `M-w`             | Cut to the line end or start, cut or copy the selection |
+| `C-y` `M-y`                         | Paste the newest cut, then swap in older ones           |
+| `C-SPC` `C-g` `C-x C-x` `C-x h`     | Set the mark, clear it, swap with it, select all        |
+| `C-t` `M-t` `M-u` `M-l` `M-c`       | Transpose, change word case                             |
+| `C-j` `C-/`                         | New line without sending, undo                          |
+
+`C-u` cuts to the start of the line as in a shell, since T3 Code has no prefix
+arguments.
+
+App shortcuts move to Emacs keys where Emacs has one, and to `C-c` otherwise,
+the prefix Emacs leaves for users. `C-c` shortcuts don't apply in the terminal,
+where `C-c` interrupts the program.
+
+| Command                                    | Emacs profile                              |
+| ------------------------------------------ | ------------------------------------------ |
+| Command palette                            | `M-x`                                      |
+| File picker                                | `C-x C-f`                                  |
+| Find in a thread or browser page           | `C-s`, and `C-r` backwards in a thread     |
+| Close a right panel tab                    | `C-x k`                                    |
+| Browser zoom                               | `C-x C-=`, `C-x C--`, `C-x C-0`            |
+| Toggle the terminal                        | `` C-` `` or `C-c t`                       |
+| Sidebar, diff, new thread, stash           | `C-c b`, `C-c d`, `C-c n`, `C-c s`         |
+| Back, forward                              | `C-c [`, `C-c ]`                           |
+| New right panel tab, usage, open in editor | `C-c w`, `C-c u`, `C-c o`                  |
+| Browser address bar, reload                | `C-c l`, `C-c r`                           |
+| Reload the app window                      | `C-c C-r`                                  |
+| Undo a sidebar action                      | `C-c z`                                    |
+| New, close, split terminal                 | `C-S-n`, `C-S-w`, `C-S-e`, in the terminal |
+
+On macOS, these commands also keep their usual `Cmd` shortcuts.
 
 ## Reserved shortcuts
 
