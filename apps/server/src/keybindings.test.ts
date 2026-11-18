@@ -62,8 +62,15 @@ const readActiveProfileEntries = (configPath: string) =>
     return (file.profiles[file.profile]?.keybindings ?? []) as unknown[];
   });
 
+/** The active profile's own rules, then the project script shortcuts. */
 const readKeybindingsConfig = (configPath: string) =>
-  Effect.flatMap(readActiveProfileEntries(configPath), decodeKeybindingsConfig);
+  Effect.gen(function* () {
+    const file = yield* readKeybindingsFile(configPath);
+    return yield* decodeKeybindingsConfig([
+      ...(yield* readActiveProfileEntries(configPath)),
+      ...(file.scripts ?? []),
+    ]);
+  });
 
 const commandRules = (
   rules: ReadonlyArray<ResolvedKeybindingRule>,
@@ -202,6 +209,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.deepEqual(yield* readKeybindingsFile(keybindingsConfigPath), {
         profile: "default",
         profiles: {},
+        scripts: [],
       });
       const state = yield* keybindings.loadConfigState;
       assert.deepEqual(state.keybindings, SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS);
@@ -368,6 +376,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.deepEqual(yield* readKeybindingsFile(keybindingsConfigPath), {
         profile: "default",
         profiles: {},
+        scripts: [],
       });
       assert.deepStrictEqual(yield* backgroundRules, []);
       assert.deepEqual(
@@ -579,14 +588,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
   it.effect("unassigns a shortcut without restoring it on startup and can reassign it", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
-      yield* writeKeybindingsConfig(
-        keybindingsConfigPath,
-        // Room for exactly the two rules the unassign copies from the defaults.
-        Array.from({ length: MAX_KEYBINDINGS_COUNT - 2 }, (_, index) => ({
-          key: "mod+alt+f1",
-          command: `script.filler-${index}.run` as const,
-        })),
-      );
       const keybindings = yield* Keybindings.Keybindings;
       const target = SharedKeybindings.DEFAULT_KEYBINDINGS.find(
         (rule) => rule.command === "composer.sendBackground",
@@ -623,11 +624,18 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           (rule) => rule.command === target.command,
         ),
       );
+      yield* writeKeybindingsConfig(
+        keybindingsConfigPath,
+        Array.from({ length: MAX_KEYBINDINGS_COUNT }, (_, index) => ({
+          key: "mod+alt+f1",
+          command: `script.filler-${index}.run` as const,
+        })),
+      );
       assertFailure(
         yield* toDetailResult(
-          keybindings.upsertKeybindingRule({ key: "mod+alt+f2", command: "workspace.focusNext" }),
+          keybindings.upsertKeybindingRule({ key: "mod+alt+f2", command: "script.more.run" }),
         ),
-        `a profile holds at most ${MAX_KEYBINDINGS_COUNT} rules`,
+        `a profile, or the project script list, holds at most ${MAX_KEYBINDINGS_COUNT} rules`,
       );
     }).pipe(Effect.provide(layerKeybindings())),
   );
@@ -640,35 +648,31 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const badShortcut = { key: "mod+shift+d+o", command: "terminal.new" };
       yield* fs.writeFileString(
         keybindingsConfigPath,
-        JSON.stringify([
-          { key: "mod+r", command: "script.run-tests.run" },
-          futureCommand,
-          badShortcut,
-        ]),
+        JSON.stringify([{ key: "mod+r", command: "terminal.toggle" }, futureCommand, badShortcut]),
       );
       const keybindings = yield* Keybindings.Keybindings;
       const persisted = readActiveProfileEntries(keybindingsConfigPath);
 
       const saved = yield* keybindings.upsertKeybindingRule({
         key: "mod+shift+r",
-        command: "script.run-tests.run",
+        command: "terminal.toggle",
       });
       assert.equal(saved.issues.length, 2);
       assert.deepEqual(yield* persisted, [
-        { key: "mod+r", command: "script.run-tests.run" },
+        { key: "mod+r", command: "terminal.toggle" },
         futureCommand,
         badShortcut,
-        { key: "mod+shift+r", command: "script.run-tests.run" },
+        { key: "mod+shift+r", command: "terminal.toggle" },
       ]);
 
       const removed = yield* keybindings.removeKeybindingRule({
         key: "mod+r",
-        command: "script.run-tests.run",
+        command: "terminal.toggle",
       });
       assert.deepEqual(yield* persisted, [
         futureCommand,
         badShortcut,
-        { key: "mod+shift+r", command: "script.run-tests.run" },
+        { key: "mod+shift+r", command: "terminal.toggle" },
       ]);
       const { issues } = yield* keybindings.loadConfigState;
       assert.deepEqual(removed.issues, issues);
@@ -930,6 +934,51 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       const builtIn = yield* keybindings.mutateProfile({ type: "select", profileId: "default" });
       assert.deepEqual(builtIn.keybindings, SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("keeps project script shortcuts outside profiles", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+      const script = { key: "mod+shift+r", command: "script.test.run" } as const;
+
+      const saved = yield* keybindings.upsertKeybindingRule({
+        ...script,
+        profile: { profileId: "my-copy", copyOf: { extends: "default", name: "Default copy" } },
+      });
+      assert.equal(saved.activeKeybindingProfile, "default");
+      const file = yield* readKeybindingsFile(keybindingsConfigPath);
+      assert.deepEqual(file.profiles, {});
+      assert.deepEqual(file.scripts, [script]);
+
+      const switched = yield* keybindings.mutateProfile({
+        type: "create",
+        id: "my-keys",
+        name: "Mine",
+        extends: "default",
+      });
+      assert.deepEqual(
+        commandRules(switched.keybindings, "script.test.run"),
+        SharedKeybindings.compileResolvedKeybindingsConfig([script]),
+      );
+
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        JSON.stringify({ scripts: [script, { key: "mod+g", command: "terminal.toggle" }] }),
+      );
+      yield* keybindings.revalidate;
+      const state = yield* keybindings.loadConfigState;
+      assert.deepEqual(
+        state.issues.map((issue) => issue.kind === "keybindings.invalid-entry" && issue.index),
+        [1],
+      );
+      assert.deepEqual(
+        commandRules(state.keybindings, "terminal.toggle"),
+        commandRules(SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS, "terminal.toggle"),
+      );
     }).pipe(Effect.provide(layerKeybindings())),
   );
 

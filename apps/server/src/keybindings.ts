@@ -57,6 +57,7 @@ import {
   type KeybindingProfileDefinition,
   keybindingProfileSummaries,
   newKeybindingProfileId,
+  mergeKeybindingLayer,
   resolveKeybindingProfileRules,
   uniqueKeybindingProfileName,
 } from "@t3tools/shared/keybindingProfiles";
@@ -300,6 +301,8 @@ interface KeybindingsFile {
   readonly extra: Readonly<Record<string, unknown>>;
   readonly profileId: string | undefined;
   readonly profiles: ReadonlyArray<ProfileEntry>;
+  /** Project script shortcuts, which apply whatever profile is active. */
+  readonly scripts: ReadonlyArray<RuleEntry>;
   /** A bare array's rules, or a top-level "keybindings" list, which fold into a profile. */
   readonly looseRules: ReadonlyArray<RuleEntry>;
   /** The loose rules come from a bare array, written by a build from before profiles. */
@@ -321,14 +324,17 @@ const EMPTY_FILE: KeybindingsFile = {
   extra: {},
   profileId: undefined,
   profiles: [],
+  scripts: [],
   looseRules: [],
   bareArray: false,
 };
 
 const MALFORMED_NOT_JSON = "expected a JSON object or array";
 const MALFORMED_UNKNOWN_SHAPE =
-  'expected an object with "profile", "profiles", or "keybindings", or an array of rules';
-const FILE_KEYS = new Set(["profile", "profiles", "keybindings"]);
+  'expected an object with "profile", "profiles", "scripts" or "keybindings", or an array of rules';
+const FILE_KEYS = new Set(["profile", "profiles", "scripts", "keybindings"]);
+
+const isScriptCommand = (command: string) => command.startsWith("script.");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -382,7 +388,13 @@ function parseKeybindingsFile(raw: string): ParsedKeybindingsFile {
   if (keys.length > 0 && !keys.some((key) => FILE_KEYS.has(key))) {
     return { _tag: "Malformed", detail: MALFORMED_UNKNOWN_SHAPE, cause: null };
   }
-  const { profile: rawProfileId, profiles: rawProfiles, keybindings: rawRules, ...extra } = value;
+  const {
+    profile: rawProfileId,
+    profiles: rawProfiles,
+    scripts: rawScripts,
+    keybindings: rawRules,
+    ...extra
+  } = value;
 
   let profileId: string | undefined;
   if (rawProfileId !== undefined) {
@@ -398,6 +410,9 @@ function parseKeybindingsFile(raw: string): ParsedKeybindingsFile {
   }
   if (rawProfiles !== undefined && !Array.isArray(rawProfiles) && !isRecord(rawProfiles)) {
     return { _tag: "Malformed", detail: 'expected "profiles" to be an object', cause: null };
+  }
+  if (rawScripts !== undefined && !Array.isArray(rawScripts)) {
+    return { _tag: "Malformed", detail: 'expected "scripts" to be an array', cause: null };
   }
   if (rawRules !== undefined && !Array.isArray(rawRules)) {
     return { _tag: "Malformed", detail: 'expected "keybindings" to be an array', cause: null };
@@ -448,6 +463,15 @@ function parseKeybindingsFile(raw: string): ParsedKeybindingsFile {
       extra,
       profileId,
       profiles,
+      scripts: decodeRuleEntries(rawScripts ?? [], "scripts", issues, warnings).map(
+        (entry, index) => {
+          if (!entry.rule || isScriptCommand(entry.rule.command)) return entry;
+          const detail = `scripts: "${entry.rule.command}" is not a project script command`;
+          issues.push(invalidEntryIssue(index, detail));
+          warnings.push({ location: "scripts", index, entry: entry.value, error: detail });
+          return { value: entry.value, rule: null };
+        },
+      ),
       looseRules: decodeRuleEntries(rawRules ?? [], "", issues, warnings),
       bareArray: false,
     },
@@ -478,6 +502,7 @@ function serializeKeybindingsFile(file: KeybindingsFile): unknown {
         ];
       }),
     ),
+    scripts: file.scripts.map(({ value }) => value),
     ...file.extra,
   };
 }
@@ -534,7 +559,9 @@ function configStateFromFile(
       : []),
   ];
   return {
-    keybindings: compileResolvedKeybindingsConfig(active.rules),
+    keybindings: compileResolvedKeybindingsConfig(
+      mergeKeybindingLayer(active.rules, decodedRules(folded.scripts)),
+    ),
     keybindingProfiles: keybindingProfileSummaries(customProfileDefinitions(folded)),
     activeKeybindingProfile: active.id,
     issues: [...issues, ...problems.map(malformedConfigIssue)],
@@ -640,10 +667,16 @@ function newProfileError(
  */
 function foldLooseRules(file: KeybindingsFile): KeybindingsFile {
   if (file.looseRules.length === 0) return file;
-  const rest = { ...file, looseRules: [], bareArray: false };
+  const isScript = (entry: RuleEntry) => isScriptCommand(writtenRule(entry)?.command ?? "");
+  const rest = {
+    ...file,
+    scripts: [...file.scripts, ...file.looseRules.filter(isScript)],
+    looseRules: [],
+    bareArray: false,
+  };
   const active = activeProfileOf(rest);
   const groups = new Map<string, RuleEntry[]>();
-  for (const entry of file.looseRules) {
+  for (const entry of file.looseRules.filter((entry) => !isScript(entry))) {
     const command = writtenRule(entry)?.command ?? "";
     groups.set(command, [...(groups.get(command) ?? []), entry]);
   }
@@ -663,6 +696,7 @@ function foldLooseRules(file: KeybindingsFile): KeybindingsFile {
     [...groups].flatMap(([command, entries]) => (isDefault(command, entries) ? [] : entries)),
   );
   const entries = file.looseRules.filter((entry) => kept.has(entry));
+
   return entries.length === 0 ? rest : withGeneratedProfile(rest, "Custom", active.id, entries);
 }
 
@@ -670,12 +704,23 @@ function foldLooseRules(file: KeybindingsFile): KeybindingsFile {
  * Where an edit lands: `request.profileId` when it is the active custom profile, or a new copy of
  * the active built-in, which stays unchanged. A copy is kept only when the edit leaves it with
  * rules of its own. Clients from before profiles send no request and edit the active profile.
+ * Project script shortcuts sit outside profiles, so their edits ignore the request.
  */
 function editTargetFor(
   file: KeybindingsFile,
   command: KeybindingCommand,
   request: KeybindingEditTarget | undefined,
 ) {
+  if (isScriptCommand(command)) {
+    return {
+      entries: file.scripts,
+      inherited: activeProfileOf(file).rules.filter((rule) => rule.command === command),
+      write: (entries: ReadonlyArray<RuleEntry>): KeybindingsFile => ({
+        ...file,
+        scripts: entries,
+      }),
+    };
+  }
   const requested = resolveKeybindingProfileRules(
     file.profileId ?? DEFAULT_KEYBINDING_PROFILE_ID,
     customProfileDefinitions(file),
@@ -919,7 +964,11 @@ const make = Effect.gen(function* () {
 
   const requireRoom = (entries: ReadonlyArray<RuleEntry>) =>
     entries.length > MAX_KEYBINDINGS_COUNT
-      ? Effect.fail(configError(`a profile holds at most ${MAX_KEYBINDINGS_COUNT} rules`))
+      ? Effect.fail(
+          configError(
+            `a profile, or the project script list, holds at most ${MAX_KEYBINDINGS_COUNT} rules`,
+          ),
+        )
       : Effect.succeed(entries);
 
   /** Returns the late defaults a full layer could not take, which stay pending. */

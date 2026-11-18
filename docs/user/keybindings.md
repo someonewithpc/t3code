@@ -135,7 +135,8 @@ Keybindings live on the environment's machine, in
         { "key": "mod+shift+g", "command": "terminal.new", "when": "terminalFocus" }
       ]
     }
-  }
+  },
+  "scripts": [{ "key": "mod+shift+r", "command": "script.test.run" }]
 }
 ```
 
@@ -144,6 +145,10 @@ keyed by id, so a JSON merge can add one without touching the others. An id uses
 lowercase letters, digits and dashes. Profiles T3 Code creates get ids starting
 with `my-`, which no built-in profile uses. `extends` names the profile each one
 starts from, `default` if you leave it out.
+
+`scripts` holds the shortcuts of project scripts, the `script.<id>.run`
+commands. They apply whatever profile is active, so saving one never copies a
+built-in profile.
 
 The file holds only your changes. The defaults come from the profile, so new
 defaults in later versions reach you without edits. A profile's rules for a
@@ -154,8 +159,8 @@ shortcut next to a new one, list both. To turn a default off, give it
 Older versions wrote a JSON array of rules that included every default. The
 first start after upgrading saves that file as `keybindings.json.pre-profiles`
 and converts it. Commands whose rules match the defaults of this or an earlier
-version are dropped. The rest, unassigned shortcuts included, go into a new
-profile named Custom that extends Default and becomes active. If nothing is
+version are dropped. Project script shortcuts move to `scripts`. The rest,
+unassigned shortcuts included, go into a new profile named Custom that extends Default and becomes active. If nothing is
 left, Default stays active.
 
 Invalid rules are ignored, and T3 Code keeps them in the file when it saves, so

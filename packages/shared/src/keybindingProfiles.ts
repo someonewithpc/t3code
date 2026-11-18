@@ -88,7 +88,7 @@ export function isBuiltInKeybindingProfileId(id: string): boolean {
 }
 
 /** A layer's rules for a command replace every rule the base has for that command. */
-function mergeKeybindingLayer(
+export function mergeKeybindingLayer(
   base: ReadonlyArray<KeybindingRule>,
   layer: ReadonlyArray<KeybindingRule>,
 ): ReadonlyArray<KeybindingRule> {

@@ -1368,6 +1368,9 @@ function BrowserKeybindingNotice() {
   );
 }
 
+// Project script shortcuts sit outside profiles, so their edits never copy one.
+const isScriptCommand = (command: KeybindingCommand) => command.startsWith("script.");
+
 function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
   const ids = new Map<string, string>();
   const seen = new Set<KeybindingCommand>();
@@ -1501,7 +1504,9 @@ export function KeybindingsSettingsPanel() {
       ...(input.replace ? { replace: input.replace } : {}),
     };
     const before = primaryEnvironment.serverConfig;
-    const profile = editTargetFor(before, everyProfile);
+    const profile = isScriptCommand(input.command)
+      ? undefined
+      : editTargetFor(before, everyProfile);
     void (async () => {
       const results = await Promise.all(
         connectedEnvironments.map((target) =>
@@ -1539,7 +1544,7 @@ export function KeybindingsSettingsPanel() {
       return;
     setSavingCommand(row.command);
     const before = primaryEnvironment.serverConfig;
-    const profile = editTargetFor(before, everyProfile);
+    const profile = isScriptCommand(row.command) ? undefined : editTargetFor(before, everyProfile);
     void (async () => {
       const results = await Promise.all(
         connectedEnvironments.map((target) =>
