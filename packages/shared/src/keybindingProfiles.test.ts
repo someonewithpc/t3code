@@ -55,6 +55,17 @@ describe("keybindingProfileDefaults", () => {
     expect(keysFor(defaults, "commandPalette.toggle")).toEqual(["mod+k"]);
   });
 
+  it("resolves a profile that extends nothing to its own rules, with nothing to reset to", () => {
+    const root = keybindingProfileSummaries([
+      { id: "root", name: "Root", extends: null, keybindings: [] },
+    ]);
+    expect(resolveKeybindingProfileRules("root", [{ ...root.at(-1)!, keybindings: [] }])).toEqual({
+      ok: true,
+      rules: [],
+    });
+    expect(keybindingProfileDefaults("root", root)).toEqual([]);
+  });
+
   it("resets a built-in to itself, and falls back to the stock defaults without profiles", () => {
     expect(keybindingProfileDefaults("default", profiles)).toEqual(DEFAULT_KEYBINDINGS);
     expect(keybindingProfileDefaults(undefined, undefined)).toBe(DEFAULT_KEYBINDINGS);

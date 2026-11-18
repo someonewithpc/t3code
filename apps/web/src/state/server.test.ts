@@ -123,4 +123,12 @@ describe("createShortcutKeybindingsAtom", () => {
     harness.registry.set(harness.primaryEnvironmentIdAtom, null);
     expect(harness.cmdN()).toBe("chat.newLocal");
   });
+
+  it("adds no defaults to the rules of a server with profiles", () => {
+    const empty = { ...config([]), keybindingProfiles: [] } as ServerConfig;
+    const harness = makeHarness({ primaryEnvironmentId: PRIMARY, primaryConfig: empty });
+    expect(harness.keybindings()).toEqual([]);
+    harness.registry.set(harness.primaryConfigAtom, config([]));
+    expect(harness.cmdN()).toBe("chat.new");
+  });
 });

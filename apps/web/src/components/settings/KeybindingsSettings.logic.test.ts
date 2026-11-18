@@ -2,6 +2,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -90,6 +91,18 @@ describe("KeybindingsSettings.logic", () => {
       { key: "ctrl+j", source: "Custom", defaultKey: "ctrl+j", isUnassigned: true },
       { key: "mod+j", source: "Custom", defaultKey: "ctrl+j", isUnassigned: false },
     ]);
+  });
+
+  it("lists stock commands as unassigned in a profile with no shortcuts", () => {
+    const rows = buildKeybindingRows([], "Linux x86_64", []);
+    const stockCommands = new Set(DEFAULT_RESOLVED_KEYBINDINGS.map((binding) => binding.command));
+    expect(rows.map((row) => row.command)).toEqual(expect.arrayContaining([...stockCommands]));
+    expect(rows).toHaveLength(stockCommands.size);
+    expect(rows.find((row) => row.command === "sidebar.toggle")).toMatchObject({
+      key: "mod+b",
+      isUnassigned: true,
+      defaultKey: null,
+    });
   });
 
   it("captures platform-specific mod shortcuts", () => {

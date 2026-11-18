@@ -272,14 +272,23 @@ export function groupKeybindingRows(
   });
 }
 
-/** `defaults` are the active profile's built-in rules, which Reset to default restores. */
+/**
+ * `defaults` are what the active profile inherits, which Reset to default restores. When it
+ * inherits nothing, commands the stock defaults bind and it leaves out show as unassigned.
+ */
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
   defaults: ResolvedKeybindingsConfig = DEFAULT_RESOLVED_KEYBINDINGS,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
-  for (const binding of keybindings) {
+  const bound = new Set(keybindings.map((binding) => binding.command));
+  const unbound = new Map<KeybindingCommand, ResolvedKeybindingRule>();
+  for (const binding of defaults.length === 0 ? DEFAULT_RESOLVED_KEYBINDINGS : []) {
+    if (bound.has(binding.command) || unbound.has(binding.command)) continue;
+    unbound.set(binding.command, { ...binding, whenAst: { type: "identifier", name: "false" } });
+  }
+  for (const binding of [...keybindings, ...unbound.values()]) {
     const defaultBinding = defaultBindingForBinding(binding, defaults);
     const key = keybindingInputForBinding(binding);
     const when = whenAstToExpression(binding.whenAst);
@@ -291,9 +300,10 @@ export function buildKeybindingRows(
       when,
       source: sourceForBinding(binding, defaults),
       isUnassigned:
-        when === "false" &&
-        defaultBinding !== undefined &&
-        key === keybindingInputForBinding(defaultBinding),
+        unbound.get(binding.command) === binding ||
+        (when === "false" &&
+          defaultBinding !== undefined &&
+          key === keybindingInputForBinding(defaultBinding)),
       defaultKey: defaultBinding ? keybindingInputForBinding(defaultBinding) : null,
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,

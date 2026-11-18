@@ -42,7 +42,7 @@ const BUILT_IN_PROFILE_NAMES: Readonly<Record<string, string>> = {
   default: msg("Default"),
 };
 
-type ProfileDialog = "duplicate" | "rename" | "delete";
+type ProfileDialog = "duplicate" | "empty" | "rename" | "delete";
 
 type ProfileState = Pick<
   ServerUpsertKeybindingResult,
@@ -213,6 +213,7 @@ export function KeybindingProfileSection({
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuItem onClick={() => setDialog("duplicate")}>{gt("Duplicate")}</MenuItem>
+                <MenuItem onClick={() => setDialog("empty")}>{gt("New empty profile")}</MenuItem>
                 {active.builtIn ? null : (
                   <>
                     <MenuItem onClick={() => setDialog("rename")}>{gt("Rename")}</MenuItem>
@@ -229,6 +230,7 @@ export function KeybindingProfileSection({
       {dialog === "delete" ? (
         <DeleteProfileDialog
           dependent={profiles.find((profile) => profile.extends === active.id)}
+          extendsNothing={active.extends === null}
           profileName={profileName}
           isSaving={isSaving}
           onClose={() => setDialog(null)}
@@ -238,28 +240,30 @@ export function KeybindingProfileSection({
         <ProfileNameDialog
           mode={dialog}
           initialName={
-            dialog === "duplicate"
-              ? uniqueKeybindingProfileName(
-                  gt("{name} copy", { name: profileName(active) }),
+            dialog === "rename"
+              ? profileName(active)
+              : uniqueKeybindingProfileName(
+                  dialog === "duplicate"
+                    ? gt("{name} copy", { name: profileName(active) })
+                    : gt("Empty profile"),
                   new Set(everyProfile.map((profile) => profile.name)),
                 )
-              : profileName(active)
           }
           isSaving={isSaving}
           onClose={() => setDialog(null)}
           onSave={(name) =>
             void run(
-              dialog === "duplicate"
-                ? {
+              dialog === "rename"
+                ? { type: "rename", profileId: active.id, name }
+                : {
                     type: "create",
                     id: newKeybindingProfileId(
                       name,
                       new Set(everyProfile.map((profile) => profile.id)),
                     ),
                     name,
-                    extends: active.id,
-                  }
-                : { type: "rename", profileId: active.id, name },
+                    extends: dialog === "duplicate" ? active.id : null,
+                  },
             )
           }
         />
@@ -275,7 +279,7 @@ function ProfileNameDialog({
   onClose,
   onSave,
 }: {
-  mode: "duplicate" | "rename";
+  mode: "duplicate" | "empty" | "rename";
   initialName: string;
   isSaving: boolean;
   onClose: () => void;
@@ -301,11 +305,19 @@ function ProfileNameDialog({
         >
           <DialogHeader>
             <DialogTitle>
-              {mode === "duplicate" ? gt("Duplicate profile") : gt("Rename profile")}
+              {mode === "duplicate"
+                ? gt("Duplicate profile")
+                : mode === "empty"
+                  ? gt("New empty profile")
+                  : gt("Rename profile")}
             </DialogTitle>
             {mode === "duplicate" ? (
               <DialogDescription>
                 {gt("The new profile starts with these shortcuts and becomes active.")}
+              </DialogDescription>
+            ) : mode === "empty" ? (
+              <DialogDescription>
+                {gt("The new profile starts with no shortcuts and becomes active.")}
               </DialogDescription>
             ) : null}
           </DialogHeader>
@@ -327,7 +339,11 @@ function ProfileNameDialog({
               {gt("Cancel")}
             </Button>
             <Button type="submit" disabled={isSaving || !trimmed}>
-              {mode === "duplicate" ? gt("Duplicate") : gt("Rename")}
+              {mode === "duplicate"
+                ? gt("Duplicate")
+                : mode === "empty"
+                  ? gt("Create")
+                  : gt("Rename")}
             </Button>
           </DialogFooter>
         </form>
@@ -338,12 +354,14 @@ function ProfileNameDialog({
 
 function DeleteProfileDialog({
   dependent,
+  extendsNothing,
   profileName,
   isSaving,
   onClose,
   onDelete,
 }: {
   dependent: KeybindingProfileSummary | undefined;
+  extendsNothing: boolean;
   profileName: (profile: KeybindingProfileSummary) => string;
   isSaving: boolean;
   onClose: () => void;
@@ -365,9 +383,11 @@ function DeleteProfileDialog({
               ? gt("{profile} extends this profile. Delete {profile} first.", {
                   profile: profileName(dependent),
                 })
-              : gt(
-                  "Its shortcuts are deleted and the profile it was duplicated from becomes active.",
-                )}
+              : extendsNothing
+                ? gt("Its shortcuts are deleted and Default becomes active.")
+                : gt(
+                    "Its shortcuts are deleted and the profile it was duplicated from becomes active.",
+                  )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

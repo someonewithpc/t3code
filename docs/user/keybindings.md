@@ -113,6 +113,9 @@ work on profiles you made. Deleting the active profile switches to the one it
 extends. A profile that another profile extends can't be deleted until that one
 is gone.
 
+**New empty profile** makes a profile with no shortcuts at all and switches to
+it. Every command starts unassigned, so only the shortcuts you add apply.
+
 When the scope picker covers several machines, profile changes and shortcut
 changes go to each of them, so they keep the same profiles. A machine where the
 change doesn't fit, for example because another profile is active there,
@@ -144,7 +147,8 @@ Keybindings live on the environment's machine, in
 keyed by id, so a JSON merge can add one without touching the others. An id uses
 lowercase letters, digits and dashes. Profiles T3 Code creates get ids starting
 with `my-`, which no built-in profile uses. `extends` names the profile each one
-starts from, `default` if you leave it out.
+starts from, `default` if you leave it out, or `null` for a profile that starts
+from no shortcuts.
 
 `scripts` holds the shortcuts of project scripts, the `script.<id>.run`
 commands. They apply whatever profile is active, so saving one never copies a

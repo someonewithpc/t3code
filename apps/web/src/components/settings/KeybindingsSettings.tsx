@@ -32,7 +32,7 @@ import {
 import {
   compileResolvedKeybindingsConfig,
   keybindingRuleSteps,
-  mergeWithDefaultKeybindings,
+  keybindingsWithClientDefaults,
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
 import { keybindingProfileDefaults } from "@t3tools/shared/keybindingProfiles";
@@ -1385,7 +1385,10 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
   const serverConfig = useSettingsScope().environment?.serverConfig;
-  const merged = mergeWithDefaultKeybindings(serverConfig?.keybindings ?? []);
+  const merged = keybindingsWithClientDefaults(
+    serverConfig?.keybindings ?? [],
+    serverConfig?.keybindingProfiles !== undefined,
+  );
   const defaults = compileResolvedKeybindingsConfig(
     keybindingProfileDefaults(
       serverConfig?.activeKeybindingProfile,

@@ -285,13 +285,13 @@ export const KeybindingProfileSummaries = ForwardCompatibleArray(KeybindingProfi
 
 export const KeybindingProfileMutation = Schema.Union([
   Schema.Struct({ type: Schema.Literal("select"), profileId: KeybindingProfileId }),
-  // The new profile extends `extends` and becomes active. Clients pick the id, so every
-  // environment a change fans out to gets the same one.
+  // The new profile extends `extends`, or nothing when null, and becomes active. Clients pick
+  // the id, so every environment a change fans out to gets the same one.
   Schema.Struct({
     type: Schema.Literal("create"),
     id: KeybindingProfileId,
     name: KeybindingProfileName,
-    extends: KeybindingProfileId,
+    extends: Schema.NullOr(KeybindingProfileId),
   }),
   Schema.Struct({
     type: Schema.Literal("rename"),

@@ -419,6 +419,17 @@ export function compileResolvedKeybindingsConfig(
 
 export const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
 
+/**
+ * The rules a client acts on. A server with profiles sends the active one resolved, which may
+ * leave commands unbound on purpose; older servers send only the user's rules.
+ */
+export function keybindingsWithClientDefaults(
+  keybindings: ResolvedKeybindingsConfig,
+  resolvedByServer: boolean,
+): ResolvedKeybindingsConfig {
+  return resolvedByServer ? keybindings : mergeWithDefaultKeybindings(keybindings);
+}
+
 export function mergeWithDefaultKeybindings(
   custom: ResolvedKeybindingsConfig,
 ): ResolvedKeybindingsConfig {

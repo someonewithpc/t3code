@@ -982,6 +982,45 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("creates a profile that starts from no shortcuts", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.migrateConfigOnStartup;
+
+      const empty = yield* keybindings.mutateProfile({
+        type: "create",
+        id: "my-empty",
+        name: "Empty",
+        extends: null,
+      });
+      assert.deepEqual(empty.keybindings, []);
+      assert.deepInclude(empty.keybindingProfiles.at(-1), { id: "my-empty", extends: null });
+
+      const edited = yield* keybindings.upsertKeybindingRule({
+        key: "mod+g",
+        command: "terminal.toggle",
+        profile: { profileId: "my-empty" },
+      });
+      assert.deepEqual(
+        edited.keybindings,
+        SharedKeybindings.compileResolvedKeybindingsConfig([
+          { key: "mod+g", command: "terminal.toggle" },
+        ]),
+      );
+      assert.deepEqual((yield* readKeybindingsFile(keybindingsConfigPath)).profiles, {
+        "my-empty": {
+          name: "Empty",
+          extends: null,
+          keybindings: [{ key: "mod+g", command: "terminal.toggle" }],
+        },
+      });
+
+      const deleted = yield* keybindings.mutateProfile({ type: "delete", profileId: "my-empty" });
+      assert.equal(deleted.activeKeybindingProfile, "default");
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("edits custom profiles against what they inherit", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

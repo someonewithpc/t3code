@@ -242,7 +242,7 @@ const decodeProfileHeaderExit = Schema.decodeUnknownExit(
   Schema.Struct({
     id: KeybindingProfileId,
     name: KeybindingProfileName,
-    extends: Schema.optional(KeybindingProfileId),
+    extends: Schema.optional(Schema.NullOr(KeybindingProfileId)),
   }),
 );
 const encodeRawJsonValuePretty = Schema.encodeEffect(RawJsonValuePretty);
@@ -288,11 +288,14 @@ interface ProfileEntry {
   /** The id the file keys it by; null for an entry of the older array form that has none. */
   readonly key: string | null;
   readonly value: unknown;
-  /** `extends` is absent in a hand-written profile that extends the default one. */
+  /**
+   * `extends` is null for a profile that starts from no shortcuts, and absent in a hand-written
+   * profile that extends the default one.
+   */
   readonly profile: {
     readonly id: string;
     readonly name: string;
-    readonly extends?: string | undefined;
+    readonly extends?: string | null | undefined;
   } | null;
   readonly keybindings: ReadonlyArray<RuleEntry>;
 }
@@ -518,7 +521,8 @@ function customProfileDefinitions(file: KeybindingsFile): KeybindingProfileDefin
           {
             id: profile.id,
             name: profile.name,
-            extends: profile.extends ?? DEFAULT_KEYBINDING_PROFILE_ID,
+            extends:
+              profile.extends === undefined ? DEFAULT_KEYBINDING_PROFILE_ID : profile.extends,
             keybindings: decodedRules(keybindings),
           },
         ]
@@ -617,7 +621,7 @@ function takenProfileValues(file: KeybindingsFile, field: "id" | "name"): Set<st
 
 function withNewProfile(
   file: KeybindingsFile,
-  profile: { readonly id: string; readonly name: string; readonly extends: string },
+  profile: { readonly id: string; readonly name: string; readonly extends: string | null },
   keybindings: ReadonlyArray<RuleEntry> = [],
 ): KeybindingsFile {
   return {
@@ -642,7 +646,7 @@ function withGeneratedProfile(
 /** Why `profile` cannot be added as a new profile, or null when it can. */
 function newProfileError(
   file: KeybindingsFile,
-  profile: { readonly id: string; readonly name: string; readonly extends: string },
+  profile: { readonly id: string; readonly name: string; readonly extends: string | null },
 ): string | null {
   if (isBuiltInKeybindingProfileId(profile.id) || takenProfileValues(file, "id").has(profile.id)) {
     return `a profile with the id "${profile.id}" already exists`;
@@ -757,13 +761,15 @@ function editTargetFor(
     index = target.profiles.length - 1;
   }
   const entry = target.profiles[index]!;
-  const parent = resolveKeybindingProfileRules(
-    entry.profile?.extends ?? DEFAULT_KEYBINDING_PROFILE_ID,
-    customProfileDefinitions(target),
-  );
+  const parentId = customProfileDefinitions(target).find(
+    (profile) => profile.id === entry.profile?.id,
+  )?.extends;
+  const parent = parentId
+    ? resolveKeybindingProfileRules(parentId, customProfileDefinitions(target))
+    : null;
   return {
     entries: entry.keybindings,
-    inherited: parent.ok ? parent.rules.filter((rule) => rule.command === command) : [],
+    inherited: parent?.ok ? parent.rules.filter((rule) => rule.command === command) : [],
     write: (entries: ReadonlyArray<RuleEntry>): KeybindingsFile =>
       copying && entries.length === 0
         ? file
@@ -1197,7 +1203,7 @@ const make = Effect.gen(function* () {
             return { ...file, profileId: mutation.profileId };
           }
           case "create": {
-            yield* requireResolvable(mutation.extends);
+            if (mutation.extends !== null) yield* requireResolvable(mutation.extends);
             const profile = { id: mutation.id, name: mutation.name, extends: mutation.extends };
             const error = newProfileError(file, profile);
             if (error) return yield* configError(error);

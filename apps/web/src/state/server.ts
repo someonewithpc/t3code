@@ -17,7 +17,7 @@ import {
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
-import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { keybindingsWithClientDefaults } from "@t3tools/shared/keybindings";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -121,17 +121,21 @@ export function createShortcutKeybindingsAtom(input: {
     ReadonlyMap<EnvironmentId, Pick<EnvironmentPresentation, "connection" | "serverConfig">>
   >;
 }) {
-  // Selected before merging, so unrelated config updates keep the merged array.
-  const customAtom = Atom.make((get) => {
+  const configAtom = Atom.make((get) => {
     if (get(input.primaryEnvironmentIdAtom) !== null) {
       // A primary stays authoritative while its config loads.
-      return get(input.primaryConfigAtom)?.keybindings ?? null;
+      return get(input.primaryConfigAtom);
     }
     const environments = [...get(input.environmentsAtom).values()];
-    return environments.find(isConnectedWithConfig)?.serverConfig?.keybindings ?? null;
+    return environments.find(isConnectedWithConfig)?.serverConfig ?? null;
   });
+  // Selected before merging, so unrelated config updates keep the merged array.
+  const customAtom = Atom.make((get) => get(configAtom)?.keybindings ?? null);
+  const resolvedByServerAtom = Atom.make(
+    (get) => get(configAtom)?.keybindingProfiles !== undefined,
+  );
   return Atom.make((get): ServerConfig["keybindings"] =>
-    mergeWithDefaultKeybindings(get(customAtom) ?? []),
+    keybindingsWithClientDefaults(get(customAtom) ?? [], get(resolvedByServerAtom)),
   );
 }
 
