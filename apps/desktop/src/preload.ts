@@ -43,6 +43,15 @@ try {
   }
 } catch {}
 
+try {
+  const overrides: unknown = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_STORAGE_OVERRIDES_CHANNEL);
+  if (typeof overrides === "object" && overrides !== null) {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (typeof value === "string") window.localStorage.setItem(key, value);
+    }
+  }
+} catch {}
+
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
 

@@ -80,6 +80,7 @@ import {
   completeLegacyLocalStorage,
   takeLegacyLocalStorage,
 } from "./methods/legacyLocalStorage.ts";
+import { getLocalStorageOverrides } from "./methods/localStorageOverrides.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 import {
   getCliCommandState,
@@ -99,6 +100,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handleSync(takeLegacyLocalStorage);
   yield* ipc.handle(completeLegacyLocalStorage);
+  yield* ipc.handleSync(getLocalStorageOverrides);
   yield* ipc.handleSync(getAppBranding);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
